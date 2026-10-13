@@ -1,0 +1,25 @@
+name = "cbor_det"
+description = "Deterministic CBOR (RFC 8949 section 4.2.1) in SPARK"
+version = "0.1.0"
+
+authors = ["Matt Doughty"]
+maintainers = ["Matt Doughty <matt@apogee.guru>"]
+maintainers-logins = ["m-doughty"]
+licenses = "BSD-3-Clause"
+tags = ["spark", "cbor", "rfc8949", "deterministic", "proof"]
+
+# No dependencies: the library needs nothing beyond the GNAT runtime.
+# GNATprove lives in the nested tests/ crate, so consumers never pull
+# it in.
+
+[build-switches]
+"*".ada_version = "Ada2022"
+# Release builds drop run-time checks (-gnatp). That is justified only by
+# a GNATprove proof of absence of run-time errors covering every check
+# -gnatp removes, so no release may be made without the proof passing.
+release.optimization = "Performance"
+release.runtime_checks = "None"
+release.contracts = "No"
+validation.runtime_checks = "Everything"
+validation.contracts = "Yes"
+validation.compile_checks = "Errors"

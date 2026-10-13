@@ -1,0 +1,13 @@
+# gprbuild and Alire outputs, for the crate and its nested tests/ crate.
+/obj/
+/lib/
+/bin/
+/alire/
+/config/
+/tests/obj/
+/tests/lib/
+/tests/bin/
+/tests/alire/
+/tests/config/
+
+.DS_Store

@@ -1,0 +1,21 @@
+name = "cbor_det_tests"
+description = "Tests and proofs for cbor_det"
+version = "0.1.0"
+
+authors = ["Matt Doughty"]
+maintainers-logins = ["m-doughty"]
+licenses = "BSD-3-Clause"
+executables = ["test_main"]
+
+# The development-only dependency lives here, never in the library's own
+# manifest: GNATprove, run as `alr exec -- gnatprove -P ../cbor_det.gpr`
+# from this directory.
+[[depends-on]]
+cbor_det = "*"
+gnatprove = "=16.1.0"
+
+[[pins]]
+cbor_det = { path = ".." }
+
+[build-switches]
+"*".ada_version = "Ada2022"

@@ -1,0 +1,48 @@
+with "config/cbor_det_tests_config.gpr";
+with "cbor_det.gpr";
+
+project Cbor_Det_Tests is
+
+   for Source_Dirs use ("src/", "config/");
+   for Create_Missing_Dirs use "True";
+
+   --  One object and executable directory per build-matrix cell, so the
+   --  cells built by scripts/matrix.sh never overwrite each other.
+   Cell := external ("CBOR_DET_OPT", "profile") & "-"
+           & external ("CBOR_DET_CHECKS", "profile");
+
+   for Object_Dir use
+     "obj/" & Cbor_Det_Tests_Config.Build_Profile & "-" & Cell;
+   for Exec_Dir use "bin/" & Cell;
+   for Main use ("test_main.adb");
+
+   --  The library's ghost code (Det_End, the lemmas) is compiled only when
+   --  the library is built with assertions on: the contracts cell. The
+   --  units that call it are compiled with assertions on in that cell
+   --  only; in every other cell their assertions and ghost code are
+   --  ignored, so they link against a library without ghost code, and
+   --  the runner reports their checks as not run.
+   type Checks_Kind is ("profile", "off", "lang", "contracts");
+   Checks : Checks_Kind := external ("CBOR_DET_CHECKS", "profile");
+
+   Ghost_Switches := ();
+   case Checks is
+      when "contracts" => Ghost_Switches := ("-gnata");
+      when others      => null;
+   end case;
+
+   package Compiler is
+      --  The harness always checks its own assertions.
+      for Default_Switches ("Ada") use
+        Cbor_Det_Tests_Config.Ada_Compiler_Switches & ("-gnata");
+      for Switches ("ghost_vectors.adb") use
+        Cbor_Det_Tests_Config.Ada_Compiler_Switches & Ghost_Switches;
+      for Switches ("differential.adb") use
+        Cbor_Det_Tests_Config.Ada_Compiler_Switches & Ghost_Switches;
+   end Compiler;
+
+   package Binder is
+      for Switches ("Ada") use ("-Es"); --  Symbolic traceback
+   end Binder;
+
+end Cbor_Det_Tests;

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Pre-commit hook: runs the source and leakage gates on the staged
+# content, which is what the commit will record, and refuses the commit
+# if either fails, or if any gate file in the working tree differs, byte
+# for byte, from its staged copy (the committed gate must be the one that
+# ran). The staged copy is read raw from the index (git cat-file, no
+# filters) and compared with cmp, so assume-unchanged, skip-worktree and
+# clean filters cannot hide a difference; nothing is normalised, so a
+# gate file with CRLF line ends in the working tree is refused until it
+# is restored from the index. Without cmp the hook refuses. Install it
+# once per clone:
+#
+#   git config core.hooksPath .githooks
+#
+# It can also be run by another hook manager as ./.githooks/pre-commit from
+# the top of the work tree; it prints only the gates' own output and fixed
+# messages, and exits 1 when anything is refused. No child process
+# writes its own diagnostics to the terminal: they are discarded,
+# children are judged by their exit status, and every child runs with
+# LC_ALL=C.
+
+set -u
+export LC_ALL=C
+unset LANG LANGUAGE LC_CTYPE LC_COLLATE LC_MESSAGES LC_MONETARY LC_NUMERIC \
+  LC_TIME LC_ADDRESS LC_IDENTIFICATION LC_MEASUREMENT LC_NAME LC_PAPER \
+  LC_TELEPHONE 2> /dev/null || true
+files="scripts/check-sources.sh scripts/check-leakage.sh scripts/gate-common.sh .githooks/pre-commit"
+if ! top=$(git rev-parse --show-toplevel 2> /dev/null) || [ -z "$top" ]; then
+  echo "ERROR: pre-commit: not in a git work tree"
+  exit 1
+fi
+if ! cd "$top" 2> /dev/null; then
+  echo "ERROR: pre-commit: cannot enter the work tree"
+  exit 1
+fi
+if ! command -v cmp > /dev/null 2>&1; then
+  echo "REFUSED: pre-commit: cmp is not available"
+  exit 1
+fi
+if { [ -n "${TMPDIR:-}" ] && [ ! -d "$TMPDIR" ]; } \
+   || ! tmp=$(mktemp -d 2> /dev/null) || [ -z "$tmp" ]; then
+  echo "ERROR: pre-commit: cannot create a temporary directory"
+  exit 1
+fi
+refuse () {
+  echo "REFUSED: pre-commit: $1"
+  rm -rf "$tmp" 2> /dev/null
+  exit 1
+}
+for f in $files; do
+  if [ ! -f "$f" ] || [ -L "$f" ]; then
+    refuse "a gate file is missing from the working tree"
+  fi
+  if ! git cat-file blob ":$f" > "$tmp/staged" 2> /dev/null; then
+    refuse "a gate file is not in the index"
+  fi
+  if ! cmp -s "$tmp/staged" "$f"; then
+    refuse "$f differs from its staged copy (restore with: git checkout -- $f)"
+  fi
+done
+status=0
+bash scripts/check-sources.sh --staged || status=1
+bash scripts/check-leakage.sh --staged || status=1
+rm -rf "$tmp" 2> /dev/null
+exit "$status"

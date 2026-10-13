@@ -1,0 +1,309 @@
+# cbor_det
+
+Deterministic CBOR (RFC 8949, section 4.2.1) in SPARK. The crate is to
+check encoded CBOR items against the core deterministic encoding
+requirements of RFC 8949 section 4.2.1, within a fixed nesting limit,
+and report the result as a `Status`.
+
+**Status: proof core only.** Version 0.1.0 holds the shared types of
+`Cbor_Det` and the proof core under `Cbor_Det.Proof`: the specification
+of a deterministic item and the lemmas about it. There is no decoder, no
+cursor and no writer yet: nothing a consumer calls to check an input.
+
+## What is proved
+
+GNATprove proves every check of every unit, from cold, bounded by prover
+steps only, with nothing assumed: no `pragma Assume`, no justified
+check, no `SPARK_Mode => Off`, no imported body. The only GNATprove
+annotations are `Hide_Info` and `Unhide_Info`, which choose what the
+provers see, never what they must prove.
+
+- **The specification.** `Cbor_Det.Proof.Det.Det_End (B, P, D)` is the
+  end (one past the last byte) of the deterministic item that starts at
+  `P`, or 0 if no item that starts there is accepted. It says nothing
+  about the bytes after that item. `D` is the container depth still
+  allowed: a scalar is accepted at any `D`, 0 included; every container,
+  an empty one too, needs `D >= 1`, and its members are judged at
+  `D - 1`. An item is accepted when its head is well formed and shortest
+  (RFC 8949 section 4.2.1, rule 1; additional information 28 to 31 is
+  never accepted) and it is an unsigned or negative integer of any
+  64-bit argument, a byte or text string (text as bytes: UTF-8 is not
+  checked) whose length fits, an array of accepted members, a map of
+  accepted keys and values whose keys are strictly ascending in the
+  bytewise order of their encodings (which makes them unique), or
+  `false`, `true` or `null`. Tags, floats, every other simple value and
+  indefinite lengths are refused. `Accept_Whole (B)` is the check of a
+  whole input: `B` is not empty and `Det_End (B, B'First, Max_Depth) =
+  B'Last + 1`, so 16 nested containers are accepted and 17 are not, and
+  a byte after the item is refused. The proof shows that the code meets
+  this specification; that the specification is RFC 8949 for this
+  profile is shown by the tests below, not by the proof.
+- **Heads** (`Cbor_Det.Proof.Heads`): an accepted head's bytes are the
+  encoding `Encode_Head` gives for its major type and argument, and the
+  bytes of that encoding, wherever they sit, are an accepted head of
+  that major type and argument; so two accepted heads of the same major
+  type and argument are the same bytes. A head's length is a function of
+  its first byte, and a head copied byte for byte is the same head.
+- **Transport and prefix-freedom** (`Cbor_Det.Proof.Transport`): an
+  accepted item, or run of members, copied byte for byte anywhere is
+  accepted there and ends at the corresponding place, so acceptance and
+  the end depend only on the item's own bytes; and no accepted item is a
+  proper prefix of another.
+- **The facts the later proofs use**, each a lemma: ends are within the
+  buffer and past the start; runs of members (start, step, prefix,
+  monotonicity, failure propagation); the key-order rule one key at a
+  time, and that it depends only on the bytes compared; and the algebra
+  of equal slices. Within `Cbor_Det.Proof.Det` and in the proof clients
+  below, the recursive definitions are hidden from the provers and opened
+  one step at a time by these lemmas; the proofs in
+  `Cbor_Det.Proof.Transport` see their bodies.
+- **Proof clients** (`Cbor_Det.Proof.Surface`): ghost procedures that
+  each consume lemma contracts as a later proof will, with the
+  definitions hidden, and prove from them alone the guarantees later
+  proofs rely on (for example that two accepted heads of the same major
+  type and argument are the same bytes, and that an accepted map's keys
+  are strictly ascending). Weakening a clause of an exported contract
+  that a later proof would need makes a client fail; a few clauses follow
+  from the rest of their contract, and no client can need them.
+- **No run-time error** in any of it, with or without checks.
+
+## What is tested
+
+The test runner (`tests/`, `test_main`) runs in every cell of the build
+matrix. The head helpers are tested in every cell; the specification and
+the lemmas are ghost code, compiled only when the library is built with
+its contracts on (the `contracts` cell), and the runner says whether
+they ran, and fails if they did not run where they could.
+
+- Every head form of every major type at the argument boundaries (23/24,
+  255/256, 65535/65536, 2^32-1/2^32, 2^64-1), the wider forms, the
+  truncations, and additional information 28 to 31.
+- RFC 8949 Appendix A, all 81 examples: the 37 in this profile accepted,
+  the others refused. A refusal for each rule. Item ends with unrelated
+  bytes after the item, and `Accept_Whole` on its own. 16 and 17 nested
+  containers, of every kind.
+- Null arrays with any bounds, buffers ending at the top of the index
+  range, oversized lengths and counts (including map counts around
+  2^30-1), and copies of items elsewhere.
+- The lemmas executed on real bytes: each call checks its precondition
+  and postcondition.
+- A differential test (`scripts/differential.sh`) against an independent
+  reference decoder in Python (`tests/reference/`): a corpus generated
+  from a seed (every input of up to 2 bytes, structured items nested to
+  the depth bound and one past it, keys in, out of and equal order,
+  boundary-width heads, truncations, trailing bytes), the reference's
+  head table, and every input of up to 3 bytes. Ends, head arguments
+  and lengths, and whole-input verdicts are compared separately. The
+  specification is a predicate written to be proved, not to be fast:
+  its cost grows quickly with nested maps of more than one pair, so a
+  cost model predicts each input's cost, and the few inputs too costly
+  to run are counted and reported, never skipped silently.
+
+## What is trusted
+
+Nothing beyond the GNAT run-time and the toolchain (GNAT, gprbuild,
+GNATprove and its provers) at the pinned versions below.
+
+## What is not claimed
+
+- No decoder, cursor or writer exists yet, so nothing here checks,
+  reads or writes an input outside the tests.
+- No round trip and no canonical uniqueness (that two accepted inputs
+  denoting the same value are the same bytes) are proved yet.
+- Not "RFC 8949 conformant": the specification covers this profile of
+  section 4.2.1 only, and its agreement with the RFC is tested, not
+  proved.
+- UTF-8 validity of text strings is not checked.
+- Inputs longer than 2^31-2 bytes are outside the index range.
+- No timing, stack or performance figure is claimed.
+
+## Platforms and toolchain
+
+The CI workflow builds and proves on:
+
+- Linux x86_64 (glibc)
+- Linux aarch64 (glibc)
+- macOS arm64
+- Windows x86_64
+
+with a pinned toolchain: Alire 2.1.1, GNAT 16.1.0, gprbuild 26.0.1 and
+GNATprove 16.1.0.
+
+## Building
+
+With [Alire](https://alire.ada.dev) 2.1.1:
+
+```sh
+alr -n build
+```
+
+The build matrix (`-O0`/`-O2`/`-O3` with checks off and on, plus one
+cell with contracts enabled), and the test of its driver:
+
+```sh
+bash scripts/test-matrix.sh
+bash scripts/matrix.sh
+```
+
+## Proving
+
+GNATprove is a dependency of the nested `tests/` crate only, so the
+library's own manifest stays free of it. Provers are bounded by steps,
+not time.
+
+```sh
+bash scripts/test-prove.sh      # the script fails on each way a proof run can fail
+bash scripts/prove.sh --jobs 2
+```
+
+runs the proof from cold, per unit and then per subprogram, with an
+explicit number of parallel proof jobs, and prints for each command the
+checks proved and not proved and the most steps any check took. It
+fails if a check is not proved; if gnatprove fails or is killed by a
+signal; if a command leaves no summary, or one without a well-formed
+total; if the summary does not show the unit or subprogram as analysed,
+or counts checks the output does not report; or if the summary shows a
+justified check or a `pragma Assume`. `--guard SECONDS` stops a command
+that runs longer; a tripped guard is an error to rerun, never a failed
+proof. The guard is a safeguard, not a result: its value for CI is not
+measured yet, so none is set.
+
+The whole project in one command:
+
+```sh
+cd tests
+alr -n build
+alr -n exec -- gnatprove -P ../cbor_det.gpr -j2
+```
+
+## Testing
+
+```sh
+bash scripts/matrix.sh          # every cell, the test runner in each
+bash scripts/differential.sh    # the differential test (Python 3.10+)
+```
+
+The differential fails if the cost model and the reference disagree on
+any row's end (the row is reported, never deferred); rows too costly to
+run are deferred and counted.
+
+On Windows, in Git Bash, `bash scripts/windows-check.sh` runs every check
+above and exits 0 only if all ran and passed: 1 if any failed, 2 if one
+could not run (alr or Python 3.10 or later missing). `--only STEP,...`
+or `--skip STEP,...` runs some of the steps (the names are in the
+script's header and in its summary); a run that leaves any step out
+exits 3 (PARTIAL), never 0, even if every step it ran passed, and an
+unknown step name or option exits 4 with nothing run.
+`bash scripts/test-windows-check.sh` tests those exit statuses.
+
+`CBOR_DET_SEEDS` chooses the corpus seeds (default 1).
+
+## Gates
+
+```sh
+bash scripts/check-sources.sh --self-test     # the gate catches known bypasses
+bash scripts/check-sources.sh --require-git   # no proof escape hatches
+bash scripts/test-version.sh                  # the version gate refuses each fault
+bash scripts/check-version.sh                 # versions agree
+bash scripts/check-leakage.sh --self-test     # the gate catches each class
+bash scripts/check-leakage.sh --require-git   # no local paths or private references
+```
+
+CI runs the two gates with `--require-git`, which refuses to run unless
+the crate is a git work tree. Without it, outside git, a gate falls back
+to scanning the directory with `find`: a convenience before `git init`,
+not the shipping check.
+
+To run the source and leakage gates on the staged content before every
+commit, install the pre-commit hook once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook (`.githooks/pre-commit`) runs `scripts/check-sources.sh --staged`
+and `scripts/check-leakage.sh --staged` on what the commit would record,
+and refuses the commit if either fails or if the gate scripts in the
+working tree differ from the staged ones.
+
+The gates stop accidents and a careless author; they cannot stop someone
+trying to beat a shell scanner. Escaped or encoded forms (JSON `\u`
+escapes, percent-encoding, base64, HTML entities, compressed data) are
+not decoded and are not a supported way to write anything the gates
+look for. Three stated limits of the leakage gate: an emoji built with a
+zero-width joiner is refused like any other format character; in
+Markdown code spans and fenced blocks a single bare word in double
+square brackets (the boolean `true`, say) is refused as a wikilink,
+while other code there (nested lists, quoted strings, shell tests)
+passes; and in shell and Python files, where double square brackets are
+code, only a wikilink without white space inside is caught. Shell and
+Python files are read as prose throughout, so a ticket-like token (a T
+or D and digits) is refused even in their code.
+
+Symbolic links are refused from the git index (mode 120000), so the rule
+does not depend on whether a checkout supports symbolic links; Windows
+junctions are detected by comparing each directory's real path with its
+path. Under Git Bash, MSYS or Cygwin both sides of every path comparison
+go through `cygpath -m` first. Git mode and that `cygpath` comparison are
+verified by the CI gates job on the Windows runner (`--require-git`), not
+by a local run; the self-test exercises them with stand-ins for `uname`
+and `cygpath`.
+
+A local Windows check needs no git: in Git Bash, in a plain copy of the
+crate (no `.git`), `bash scripts/windows-check.sh` runs the gates in find
+mode and everything else, and writes its summary and logs to
+`tests/obj/windows`. Find mode needs a POSIX `find`. Windows has its own
+`find` (a text search, in System32); the gates look past it to the first
+`find` on the PATH that behaves as a POSIX one, and refuse, saying so, if
+there is none. If they do refuse, put Git's tools first and run it again:
+
+```sh
+export PATH=/usr/bin:$PATH
+bash scripts/windows-check.sh
+```
+
+The summary records which `find` comes first on the PATH and whether the
+copy is a git work tree. Find mode leaves out anything named `.git`, as
+git never records it, so a stray `.git` in the copy is not scanned.
+
+What a Windows run is expected to print: each self-test ends with
+`self-test: N passed, 0 failed, K skipped`, and every skipped case is
+named on its own line, `self-test SKIPPED: CASE (MODE): REASON`. Where
+Git Bash cannot make symbolic links, expect skips for the link cases in
+find mode ("symbolic links are not available here, and find mode has no
+index"), for the cases that need a real link in the working tree ("this
+case needs a real symbolic link in the working tree"), for the
+unreadable-file case if `chmod` cannot make a file unreadable, for the
+fifo case if `mkfifo` is missing, and for the cases that run the gates
+with a PATH of their own (a tool left out) if the tools can run from
+such a directory neither as links nor as wrapper scripts (MSYS programs
+need msys-2.0.dll beside them, so the self-test uses wrappers there);
+the link cases still run in git
+and staged mode, through 120000 index entries. Any `self-test FAILED`
+line is a finding; a failed pre-commit hook case is followed by a
+diagnosis (what `git rev-parse --show-toplevel` gave, the PATH and the
+`git` the hook saw, and a `bash -x` trace of the hook), with paths and
+names scrubbed. The two gates should end with `sources: clean` and
+`leakage: clean`.
+
+The hook case without `cmp` runs with a PATH of only the tools the hook
+needs. Git puts its own directory (its exec-path) first on a hook's
+PATH. If the `git` there cannot start under that PATH (an MSYS `git`
+needs `msys-2.0.dll`, from a directory that PATH leaves out), the case
+sets `GIT_EXEC_PATH` to the tools' directory and says so in a
+`self-test NOTE` line; if git still cannot work inside a hook, the case
+is skipped, with the reason.
+
+To run only some self-test cases, set `SELF_TEST_ONLY` to a part of
+their names, as the FAILED and SKIPPED lines show them. The run ends
+`self-test: PARTIAL (...)` with the number of cases run and not
+selected; it exits 0 only if every case it ran passed, and fails if no
+case name contains the text. A partial run is never the check itself.
+
+```sh
+SELF_TEST_ONLY="hook: a missing cmp" bash scripts/check-leakage.sh --self-test
+```
+
+## License
+
+BSD-3-Clause: see [LICENSE](LICENSE).
