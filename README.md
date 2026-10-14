@@ -244,10 +244,12 @@ Symbolic links are refused from the git index (mode 120000), so the rule
 does not depend on whether a checkout supports symbolic links; Windows
 junctions are detected by comparing each directory's real path with its
 path. Under Git Bash, MSYS or Cygwin both sides of every path comparison
-go through `cygpath -m` first. Git mode and that `cygpath` comparison are
-verified by the CI gates job on the Windows runner (`--require-git`), not
-by a local run; the self-test exercises them with stand-ins for `uname`
-and `cygpath`.
+go through `cygpath -m -l` first (long names, so that a short name such
+as `RUNNER~1` in a temporary directory matches the long name git
+reports). Git mode and that `cygpath` comparison are verified by the CI
+gates job on the Windows runner (`--require-git`), not by a local run.
+On Windows the self-test compares a fixture's paths with the real `git`,
+`uname` and `cygpath`; elsewhere it uses stand-ins for them.
 
 A local Windows check needs no git: in Git Bash, in a plain copy of the
 crate (no `.git`), `bash scripts/windows-check.sh` runs the gates in find
@@ -279,8 +281,16 @@ with a PATH of their own (a tool left out) if the tools can run from
 such a directory neither as links nor as wrapper scripts (MSYS programs
 need msys-2.0.dll beside them, so the self-test uses wrappers there);
 the link cases still run in git
-and staged mode, through 120000 index entries. Any `self-test FAILED`
-line is a finding; a failed pre-commit hook case is followed by a
+and staged mode, through 120000 index entries. The cases whose file
+names Windows cannot hold (device names, a trailing dot or space, a
+colon, a question mark, a tab) are decided by trying: where `git` will
+not record such a name from the working tree (Git for Windows refuses
+them), git and staged mode put the entry in the index alone and say so
+in a `self-test NOTE` line, and if even that fails, the case is skipped
+with the reason; find mode, which has no index, is skipped where the
+name cannot be written. Any `self-test FAILED`
+line is a finding, and the first one is preceded by the system, the git
+version and the git settings that differ between hosts; a failed pre-commit hook case is followed by a
 diagnosis (what `git rev-parse --show-toplevel` gave, the PATH and the
 `git` the hook saw, and a `bash -x` trace of the hook), with paths and
 names scrubbed. The two gates should end with `sources: clean` and

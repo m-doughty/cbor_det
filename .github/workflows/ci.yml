@@ -39,10 +39,10 @@ jobs:
   prove:
     name: prove (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # Not measured on the runners yet: a generous placeholder, not a
-    # result. A run that hits it is an error to rerun, never a failed
-    # proof.
-    timeout-minutes: 180
+    # Set from two CI runs: the longest prove job took 26 minutes
+    # (Windows). A run that hits the limit is an error to rerun, never a
+    # failed proof.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -79,8 +79,9 @@ jobs:
   differential:
     name: differential (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # Not measured on the runners yet: a generous placeholder.
-    timeout-minutes: 120
+    # Set from two CI runs: the longest differential job took 18 minutes
+    # (Windows). A run that hits the limit is an error to rerun.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -114,10 +115,12 @@ jobs:
   gates:
     name: gates (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # Not measured on the runners yet: a generous placeholder, not a
-    # result. The self-tests start thousands of processes, which Git Bash
-    # on Windows does slowly. A run that hits it is an error to rerun.
-    timeout-minutes: 180
+    # Set from two CI runs: the longest gates job so far took 8 minutes
+    # (Windows, which stopped at the first failing step; its full time is
+    # still to be seen). The self-tests start thousands of processes,
+    # which Git Bash on Windows does slowly. A run that hits the limit is
+    # an error to rerun.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

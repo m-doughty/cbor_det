@@ -99,8 +99,12 @@
 #                    temporary directory; without git, the git and staged
 #                    runs are counted as skipped). The harness prints only
 #                    fixed messages and fixture output, never a path,
-#                    except in the diagnosis of a failed hook case, which
-#                    is scrubbed (st_scrub). SELF_TEST_ONLY selects the
+#                    except in the diagnosis of a failed hook case and
+#                    the host report before the first failure, which are
+#                    scrubbed (st_scrub). A file name Windows cannot hold
+#                    is written by st_odd_put, which falls back to an
+#                    index-only entry where git will not record the name
+#                    from the working tree. SELF_TEST_ONLY selects the
 #                    cases whose names contain it (st_matches); the run
 #                    then ends "self-test: PARTIAL".
 #                    Where the system cannot make a symbolic link (Git
@@ -116,15 +120,18 @@
 # directory with the crate's physical directory, and the junction check
 # compares each directory's real path with its path. On Windows under
 # MSYS, Git Bash or Cygwin (uname -s starting MINGW, MSYS or CYGWIN, with
-# cygpath on the PATH) both sides go through cygpath -m, drive letter
-# lower-cased, before they are compared; elsewhere they are compared as
-# they are. The self-test exercises that Windows path with a stand-in
-# uname and cygpath; git mode and the cygpath comparison on Windows are
-# verified by the CI gates job on the Windows runner (--require-git), not
-# by a local run. A local Windows check needs no git: in Git Bash, in a
-# plain copy of the crate, scripts/windows-check.sh runs the gates in find
-# mode (if Windows' own find comes first on the PATH and no POSIX find
-# follows it, export PATH=/usr/bin:$PATH first).
+# cygpath on the PATH) both sides go through cygpath -m -l (mixed form,
+# long names, so that an 8.3 short name such as RUNNER~1 in a temporary
+# directory matches the long name git reports), drive letter lower-cased,
+# before they are compared; elsewhere they are compared as they are. On
+# other systems the self-test exercises that Windows path with a stand-in
+# uname and cygpath; on Windows it runs the real ones. Git mode and the
+# cygpath comparison on Windows are verified by the CI gates job on the
+# Windows runner (--require-git), not by a local run. A local Windows
+# check needs no git: in Git Bash, in a plain copy of the crate,
+# scripts/windows-check.sh runs the gates in find mode (if Windows' own
+# find comes first on the PATH and no POSIX find follows it, export
+# PATH=/usr/bin:$PATH first).
 
 # Every child runs in the C locale.
 export LC_ALL=C
@@ -147,7 +154,7 @@ gate_windows () {
 gate_identity () {
   local p
   if gate_windows; then
-    if ! p=$(cygpath -m "$1" 2> /dev/null) || [ -z "$p" ]; then
+    if ! p=$(cygpath -m -l "$1" 2> /dev/null) || [ -z "$p" ]; then
       return 1
     fi
     case "$p" in
@@ -486,7 +493,7 @@ sub identity {
   my ($p) = @_;
   return $p unless $ENV{GATE_WINDOWS};
   my $fh;
-  open $fh, "-|", "cygpath", "-m", $p or return undef;
+  open $fh, "-|", "cygpath", "-m", "-l", $p or return undef;
   my $out = do { local $/; <$fh> };
   close $fh or return undef;
   return undef unless defined $out;
@@ -681,7 +688,7 @@ ST_SECRET="zz-secret""-dir"
 # st_begin GATE_SCRIPT
 st_begin () {
   ST_GATE=$1
-  ST_PASS=0 ST_FAIL=0 ST_SKIP=0 ST_N=0 ST_UNSELECTED=0
+  ST_PASS=0 ST_FAIL=0 ST_SKIP=0 ST_N=0 ST_UNSELECTED=0 ST_INDEX_ONLY_N=0
   # SELF_TEST_ONLY: run only the cases whose names contain it (see
   # st_select); read here only, so it changes nothing outside a self-test.
   ST_ONLY=${SELF_TEST_ONLY:-}
@@ -757,8 +764,40 @@ st_fixture () {
 }
 
 st_failed () {
+  if [ "$ST_FAIL" -eq 0 ]; then
+    st_host_report
+  fi
   echo "self-test FAILED: $1"
   ST_FAIL=$((ST_FAIL + 1))
+}
+
+# st_host_report: once, before the first FAILED line, what the fixtures
+# depend on: the system, the git version, and the git settings that
+# differ between hosts (core.autocrlf, core.protectNTFS, core.symlinks,
+# core.ignorecase, core.longpaths, core.fsmonitor), both as the fixtures
+# see them (no system or global configuration, in a fresh repository)
+# and as the user's git does here. Scrubbed (st_scrub).
+st_host_report () {
+  local r="$ST_DIR/host-report" k v w
+  {
+    echo "self-test: host (printed once, before the first failure):"
+    echo "  system: $(uname -s 2> /dev/null) $(uname -m 2> /dev/null)"
+    echo "  git: $(git --version 2>&1)"
+    rm -rf "$r" 2> /dev/null
+    if mkdir -p "$r" 2> /dev/null && (cd "$r" && st_git init -q --template=) \
+         > /dev/null 2>&1; then
+      for k in core.autocrlf core.protectNTFS core.symlinks core.ignorecase \
+               core.longpaths core.fsmonitor; do
+        v=$(cd "$r" && HOME="$ST_DIR/home" GIT_CONFIG_NOSYSTEM=1 \
+              git config --get "$k" 2> /dev/null) || v="(unset: git's default)"
+        w=$(cd "$r" && git config --get "$k" 2> /dev/null) || w="(unset: git's default)"
+        echo "  $k: fixtures $v; this host's git $w"
+      done
+      echo "  (the harness's own git commands also set core.autocrlf=false and core.symlinks=true)"
+    else
+      echo "  (no fresh repository could be made for the settings)"
+    fi
+  } 2>&1 | st_scrub
 }
 
 # st_matches NAME: whether the case NAME is selected: always, unless
@@ -786,8 +825,8 @@ st_select () {
 # any user's home directory (under /Users, /home or a drive's Users
 # folder) as <a home directory>, and any line holding the canary
 # (ST_SECRET, in any case) withheld. Each path is replaced in its MSYS,
-# mixed and Windows forms where cygpath exists. For the diagnosis of a
-# failed case, which shows paths and commands.
+# mixed and Windows forms, short and long, where cygpath exists. For the
+# diagnosis of a failed case, which shows paths and commands.
 st_scrub () {
   local pairs="" f to physical
   physical=$(cd "$ST_DIR" 2> /dev/null && pwd -P)
@@ -802,6 +841,8 @@ st_scrub () {
     if command -v cygpath > /dev/null 2>&1; then
       pairs="$pairs$to $(cygpath -m "$f" 2> /dev/null)
 $to $(cygpath -w "$f" 2> /dev/null)
+$to $(cygpath -m -l "$f" 2> /dev/null)
+$to $(cygpath -w -l "$f" 2> /dev/null)
 "
     fi
   done
@@ -868,7 +909,7 @@ st_run () {
   crate="$ST_DIR/c$ST_N"
   out="$ST_DIR/c$ST_N.out"
   ST_MODE=$mode ST_ENV="" ST_PREPATH="" ST_PATH="" ST_ABSENT="" ST_NO_ADD=no ST_ARGS=""
-  ST_SKIP_REASON="" ST_INDEX_LINKS=""
+  ST_SKIP_REASON="" ST_INDEX_LINKS="" ST_ODD_STAGED="" ST_INDEX_ONLY=""
   if ! st_fixture "$crate"; then
     st_failed "$name ($mode): cannot build the fixture"
     return 0
@@ -896,6 +937,10 @@ st_run () {
     echo "self-test SKIPPED: $name ($mode): $ST_SKIP_REASON"
     ST_SKIP=$((ST_SKIP + 1))
     return 0
+  fi
+  if [ "$ST_INDEX_ONLY" = yes ]; then
+    echo "self-test NOTE: $name ($mode): the file name is in the index only (this host's git does not record it from a working tree)"
+    ST_INDEX_ONLY_N=$((ST_INDEX_ONLY_N + 1))
   fi
   if [ "$mode" != find ] && [ "$ST_NO_ADD" != yes ] \
      && ! (cd "$crate" && st_git add -A && st_relink) > /dev/null 2>&1; then
@@ -1012,22 +1057,22 @@ st_shared_cases () {
   st_both "uppercase extension" "pass" st_shared_put NOTES.MD 'clean\n'
   st_both "Windows device name" \
     "FORBIDDEN (Windows-reserved name, or a name ending in a dot or space) at <file name withheld" \
-    st_shared_put docs/con.txt 'clean\n'
+    st_shared_odd docs/con.txt 'clean\n'
   st_both "Windows device name, upper case, no extension" \
     "FORBIDDEN (Windows-reserved name, or a name ending in a dot or space) at <file name withheld" \
-    st_shared_put AUX 'clean\n'
+    st_shared_odd AUX 'clean\n'
   st_both "Windows device name, numbered" \
     "FORBIDDEN (Windows-reserved name, or a name ending in a dot or space) at <file name withheld" \
-    st_shared_put lpt9.md 'clean\n'
+    st_shared_odd lpt9.md 'clean\n'
   st_both "Windows device name as a directory" \
     "FORBIDDEN (Windows-reserved name, or a name ending in a dot or space) at <file name withheld" \
-    st_shared_put Com1/x.md 'clean\n'
+    st_shared_odd Com1/x.md 'clean\n'
   st_both "name ending in a dot" \
     "FORBIDDEN (Windows-reserved name, or a name ending in a dot or space) at <file name withheld" \
-    st_shared_put x.md. 'clean\n'
+    st_shared_odd x.md. 'clean\n'
   st_both "name ending in a space" \
     "FORBIDDEN (Windows-reserved name, or a name ending in a dot or space) at <file name withheld" \
-    st_shared_put 'y.md ' 'clean\n'
+    st_shared_odd 'y.md ' 'clean\n'
   st_both "names close to device names" "pass" st_shared_device_like
   st_case3 "case-folding collision in the index" - \
     "FORBIDDEN (case-folding collision) at docs/note.md" \
@@ -1089,10 +1134,10 @@ st_shared_cases () {
     "pass:inventory: staged mode" st_shared_german_locale
   st_both "Windows-invalid character, colon" \
     "FORBIDDEN (Windows-invalid file name) at <file name withheld" \
-    st_shared_put safe:stream.txt 'clean\n'
+    st_shared_odd safe:stream.txt 'clean\n'
   st_both "Windows-invalid character, question mark" \
     "FORBIDDEN (Windows-invalid file name) at <file name withheld" \
-    st_shared_put 'safe?.txt' 'clean\n'
+    st_shared_odd 'safe?.txt' 'clean\n'
   st_both "Windows device name with a superscript digit" \
     "FORBIDDEN (Windows-reserved name, or a name ending in a dot or space) at <file name withheld" \
     st_shared_decoded_name 'COM\u{B9}.txt'
@@ -1132,6 +1177,122 @@ st_shared_cases () {
 }
 
 st_shared_put () { "$st_shared_base" && st_put "$1" "$2"; }
+
+st_shared_odd () { "$st_shared_base" && st_odd_put "$1" "$2"; }
+
+# st_odd_put PATH CONTENT: st_put for a PATH that some hosts cannot hold,
+# decided by trying, not by the name of the system. The file is written
+# and must then be in the working tree under exactly that name. In find
+# mode, if it is not, the case is skipped with a reason (find mode has no
+# index). In git and staged mode the files written before it are staged
+# first (git add -A, once, before the odd name exists), then the file by
+# its own name, and it must be in the index under exactly that name. If either fails (Git for Windows refuses
+# such names, and Windows itself maps or rejects some of them), whatever
+# the attempt left in the working tree is removed and the entry is put in
+# the index alone, as a host that can hold the name would record it: the
+# blob with git hash-object, the entry with git update-index and
+# core.protectNTFS off. The git and staged modes read the index, so the
+# gate still sees the name; the case notes that it ran so. If that fails
+# too, the case is skipped with a reason. Sets ST_NO_ADD: a file the setup
+# writes after this one must be staged by the setup.
+st_odd_put () {
+  local path=$1 content=$2 before="$ST_DIR/odd-before-$ST_N"
+  local blob="$ST_DIR/odd-blob-$ST_N" sha parent staged=yes
+  # The files written before this one are staged first, so that git add
+  # -A never sees the odd name (a host may hold it under another name,
+  # which git would then record).
+  if [ "$ST_MODE" != find ]; then
+    st_odd_stage_before || staged=no
+  fi
+  parent=$(st_odd_parent "$path")
+  st_odd_listing "$parent" > "$before" 2> /dev/null
+  if [ "$ST_MODE" != find ]; then
+    st_git ls-files -z > "$before.index" 2> /dev/null || staged=no
+  fi
+  if [ "$staged" = yes ] && st_put "$path" "$content" 2> /dev/null \
+     && st_name_exists "$path"; then
+    [ "$ST_MODE" = find ] && return 0
+    if st_git --literal-pathspecs add -- "$path" \
+         > /dev/null 2>&1 && st_index_has "$path"; then
+      ST_NO_ADD=yes
+      return 0
+    fi
+  fi
+  st_odd_clean "$parent" "$before"
+  if [ "$ST_MODE" = find ]; then
+    ST_SKIP_REASON="this host cannot hold the file name in a working tree, and find mode has no index"
+    return 0
+  fi
+  # Anything the attempt put in the index (under whatever name) goes too.
+  if [ "$staged" = yes ]; then
+    st_git ls-files -z 2> /dev/null | ST_ODD_BEFORE="$before.index" perl -0ne '
+      BEGIN { open my $f, "<", $ENV{ST_ODD_BEFORE} or exit 1;
+              local $/ = "\0"; %old = map { chomp; $_ => 1 } <$f>; }
+      chomp; print "$_\0" unless $old{$_}' \
+      | st_git update-index --force-remove -z --stdin > /dev/null 2>&1 \
+      || staged=no
+  fi
+  if [ "$staged" = yes ] && st_put "$blob" "$content" \
+     && sha=$(st_git hash-object -w -- "$blob" 2> /dev/null) && [ -n "$sha" ] \
+     && st_git -c core.protectNTFS=false update-index --add --cacheinfo \
+          "100644,$sha,$path" > /dev/null 2>&1 \
+     && st_index_has "$path"; then
+    ST_NO_ADD=yes
+    ST_INDEX_ONLY=yes
+    return 0
+  fi
+  ST_SKIP_REASON="this host's git records the file name neither from the working tree nor in the index alone"
+  return 0
+}
+
+# st_odd_stage_before: git add -A, once per case, before the first odd
+# file, so that the files written before it are staged.
+st_odd_stage_before () {
+  [ "$ST_ODD_STAGED" = yes ] && return 0
+  st_git add -A > /dev/null 2>&1 || return 1
+  ST_ODD_STAGED=yes
+}
+
+# st_odd_parent PATH: the directory that holds the first component of
+# PATH that does not exist yet ("." for the fixture's top).
+st_odd_parent () {
+  perl -e 'my @c = split m{/}, shift; pop @c; my $d = ".";
+    for my $c (@c) { last unless -d "$d/$c"; $d = "$d/$c"; } print $d' -- "$1"
+}
+
+# st_odd_listing DIR: the names in DIR, NUL-terminated.
+st_odd_listing () {
+  perl -e 'opendir my $d, shift or exit 1; print "$_\0" for readdir $d' -- "$1"
+}
+
+# st_odd_clean DIR BEFORE: removes every entry of DIR that is not in the
+# listing BEFORE (st_odd_listing), whatever name the system gave it.
+st_odd_clean () {
+  perl -MFile::Path=remove_tree -e '
+    my ($dir, $list) = @ARGV;
+    open my $f, "<", $list or exit 1;
+    my %old = map { $_ => 1 } split /\0/, do { local $/; <$f> };
+    opendir my $d, $dir or exit 1;
+    for my $n (readdir $d) {
+      next if $old{$n} || $n eq "." || $n eq "..";
+      my $p = "$dir/$n";
+      if (-d $p && !-l $p) { remove_tree($p) } else { unlink $p }
+    }' -- "$1" "$2" 2> /dev/null
+}
+
+# st_name_exists PATH: each component of PATH is in its directory under
+# exactly that name.
+st_name_exists () {
+  perl -e 'my $d = "."; for my $c (split m{/}, shift) {
+      opendir my $h, $d or exit 1; my $found = grep { $_ eq $c } readdir $h;
+      closedir $h; exit 1 unless $found; $d = "$d/$c"; } exit 0' -- "$1"
+}
+
+# st_index_has PATH: the index holds an entry named exactly PATH.
+st_index_has () {
+  st_git ls-files -z 2> /dev/null | ST_ODD_PATH=$1 perl -0ne '
+    chomp; $f = 1 if $_ eq $ENV{ST_ODD_PATH}; END { exit($f ? 0 : 1) }'
+}
 
 st_shared_args () { "$st_shared_base" && ST_ARGS=$1; }
 
@@ -1295,8 +1456,9 @@ st_shared_german_locale () {
 }
 
 st_shared_console_names () {
-  "$st_shared_base" && st_put docs/COM0.md 'clean\n' && st_put docs/LPT0.txt 'clean\n' \
-    && st_put 'docs/CONIN$.md' 'clean\n' && st_put 'CONOUT$.txt' 'clean\n'
+  "$st_shared_base" && st_odd_put docs/COM0.md 'clean\n' \
+    && st_odd_put docs/LPT0.txt 'clean\n' && st_odd_put 'docs/CONIN$.md' 'clean\n' \
+    && st_odd_put 'CONOUT$.txt' 'clean\n'
 }
 
 st_shared_project_files () {
@@ -1318,37 +1480,51 @@ st_shared_bad_locale () {
 
 st_shared_decoded_name () {
   local path
-  "$st_shared_base" && path=$(st_decode "$1") && st_put "$path" 'clean\n'
+  "$st_shared_base" && path=$(st_decode "$1") && st_odd_put "$path" 'clean\n'
 }
 
-# Stand-ins for Git Bash: uname reports MINGW, cygpath maps an MSYS path
-# to the same path on drive C, and git reports its top level in that
-# drive-letter form, as Git for Windows does. With $1 = no, only the git
-# stand-in is installed, and the gate must run without cygpath: elsewhere
-# there is none, but MSYS, Git Bash and Cygwin have one beside every other
-# tool, so there the gate's PATH is a directory of the tools it needs
-# without cygpath (st_tool_dir), or the case is skipped, saying why.
+# The Windows path comparison. On MSYS, Git Bash or Cygwin (uname -s
+# starting MINGW, MSYS or CYGWIN) with $1 = yes, the real git, uname and
+# cygpath are used, so the case tests the comparison itself: git's top
+# level and the crate's directory must be found the same, whatever form
+# git prints (an MSYS path, or a drive-letter path as Git for Windows
+# prints it). Elsewhere stand-ins play Git Bash: uname reports MINGW,
+# cygpath maps an MSYS path to the same path on drive C, and git reports
+# its top level in drive-letter form. With $1 = no, the gate must run
+# without cygpath, and git reports a drive-letter top level (the
+# stand-in adds "C:" only to a top level that has no drive letter), which
+# cannot then be compared with the crate's MSYS path: the gate falls back
+# to find mode. There is no cygpath elsewhere, but MSYS, Git Bash and
+# Cygwin have one beside every other tool, so there the gate's PATH is a
+# directory of the tools it needs without cygpath (st_tool_dir), or the
+# case is skipped, saying why.
 st_shared_windows_identity () {
-  local bin="$ST_DIR/bin/$ST_N"
+  local bin="$ST_DIR/bin/$ST_N" host=other
   "$st_shared_base" && mkdir -p "$bin" || return 1
-  if [ "$1" = no ]; then
-    case "$(uname -s 2> /dev/null)" in
-      MINGW*|MSYS*|CYGWIN*)
-        if st_tool_dir "$ST_DIR/no-cygpath-bin-$ST_N" bash sh env perl find \
-             mktemp rm grep basename uname tr cat sed dirname printf mkdir \
-             chmod ls cut; then
-          ST_PATH="$ST_DIR/no-cygpath-bin-$ST_N"
-        else
-          ST_SKIP_REASON=$ST_TOOL_DIR_REASON
-          return 0
-        fi ;;
-    esac
+  case "$(uname -s 2> /dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) host=windows ;;
+  esac
+  if [ "$1" = yes ] && [ "$host" = windows ]; then
+    if ! command -v cygpath > /dev/null 2>&1; then
+      ST_SKIP_REASON="this Windows host has no cygpath"
+    fi
+    return 0
   fi
-  printf '#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then\n  t=$("%s" rev-parse --show-toplevel) || exit $?\n  printf "C:%%s\\n" "$t"\n  exit 0\nfi\nexec "%s" "$@"\n' \
+  if [ "$1" = no ] && [ "$host" = windows ]; then
+    if st_tool_dir "$ST_DIR/no-cygpath-bin-$ST_N" bash sh env perl find \
+         mktemp rm grep basename uname tr cat sed dirname printf mkdir \
+         chmod ls cut; then
+      ST_PATH="$ST_DIR/no-cygpath-bin-$ST_N"
+    else
+      ST_SKIP_REASON=$ST_TOOL_DIR_REASON
+      return 0
+    fi
+  fi
+  printf '#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then\n  t=$("%s" rev-parse --show-toplevel) || exit $?\n  case "$t" in\n    [A-Za-z]:*) printf "%%s\\n" "$t" ;;\n    *) printf "C:%%s\\n" "$t" ;;\n  esac\n  exit 0\nfi\nexec "%s" "$@"\n' \
     "$ST_REAL_GIT" "$ST_REAL_GIT" > "$bin/git" || return 1
   if [ "$1" = yes ]; then
     printf '#!/bin/sh\necho MINGW64_NT-10.0-19045\n' > "$bin/uname" || return 1
-    printf '#!/bin/sh\n[ "$1" = -m ] || exit 1\ncase "$2" in\n  [A-Za-z]:*) printf "%%s\\n" "$2" ;;\n  /*) printf "C:%%s\\n" "$2" ;;\n  *) exit 1 ;;\nesac\n' \
+    printf '#!/bin/sh\n[ "$1" = -m ] || exit 1\nshift\n[ "$1" = -l ] && shift\ncase "$1" in\n  [A-Za-z]:*) printf "%%s\\n" "$1" ;;\n  /*) printf "C:%%s\\n" "$1" ;;\n  *) exit 1 ;;\nesac\n' \
       > "$bin/cygpath" || return 1
   fi
   chmod +x "$bin"/* && ST_PREPATH="$bin:"
@@ -1718,6 +1894,9 @@ st_end () {
   fi
   if [ "$ST_GIT" = no ]; then
     echo "self-test: git is not installed; the git and staged cases were skipped"
+  fi
+  if [ "$ST_INDEX_ONLY_N" -gt 0 ]; then
+    echo "self-test: $ST_INDEX_ONLY_N case(s) ran with a file name in the index only (see the NOTE lines)"
   fi
   if [ -n "$ST_ONLY" ] && [ "$ran" -eq 0 ]; then
     echo "self-test: FAILED: no case name contains \"$ST_ONLY\""

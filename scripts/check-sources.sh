@@ -361,7 +361,7 @@ st_sources_fake_dir () {
 }
 
 st_sources_tab_name () {
-  st_sources_base && st_put "$(printf 'src/probe\tassume.ads')" \
+  st_sources_base && st_odd_put "$(printf 'src/probe\tassume.ads')" \
     'package Probe is\nend Probe;\n' && ST_ABSENT="FORBIDDEN (Assume)"
 }
 

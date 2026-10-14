@@ -37,7 +37,11 @@
   `scripts/test-version.sh` tests it.
 - The gate self-tests run a subset with `SELF_TEST_ONLY` (reported as
   PARTIAL), and a failed pre-commit hook case prints a scrubbed
-  diagnosis.
+  diagnosis. On a host whose git will not record a file name Windows
+  cannot hold, those cases use the index alone (or are skipped, saying
+  why); on Windows the path comparison is tested with the real tools.
+- Under Git Bash, MSYS or Cygwin the gates compare paths in their long
+  form (`cygpath -m -l`).
 - `scripts/windows-check.sh` gathers every check on Windows and exits
   non-zero if a step failed or could not run, or if `--only` or `--skip`
   left a step out; `scripts/test-windows-check.sh` tests that.

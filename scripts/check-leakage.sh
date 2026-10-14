@@ -552,11 +552,17 @@ st_hook_cmp_cases () {
     st_failed "hook: cannot build the exec-path stand-in"
     return 0
   fi
-  if ! GIT_EXEC_PATH="$sim" st_tool_dir "$sim_bin" git bash sh env mktemp rm \
-         cat grep perl find id basename uname tr dirname sed cut printf mkdir \
-         chmod ls cygpath; then
-    st_skipped "hook: $sim_trips" "$ST_TOOL_DIR_REASON"
-    st_skipped "hook: $sim_name" "$ST_TOOL_DIR_REASON"
+  # The stand-in shows something only where git, unaided, works in a hook
+  # with a PATH of only the tools; elsewhere both steps are skipped.
+  local why=""
+  if ! ST_HOOK_QUIET=yes st_hook_tools_without_cmp "$sim_bin"; then
+    why=$ST_TOOL_DIR_REASON
+  elif [ -n "$ST_HOOK_CMP_ENV" ]; then
+    why="git here needs its exec-path set to work in a hook with a PATH of only the tools, so a stand-in exec-path shows nothing more"
+  fi
+  if [ -n "$why" ]; then
+    st_skipped "hook: $sim_trips" "$why"
+    st_skipped "hook: $sim_name" "$why"
     return 0
   fi
   st_hook_do st_put notes.md 'v8\n' && st_hook_do st_git add notes.md
@@ -648,7 +654,7 @@ st_hook_change () {
 
 st_leak_odd_file_name () {
   local path
-  st_leak_base && path=$(st_decode "$1") && st_put "$path" 'clean\n'
+  st_leak_base && path=$(st_decode "$1") && st_odd_put "$path" 'clean\n'
 }
 
 self_test () {
