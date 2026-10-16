@@ -118,6 +118,38 @@ holds () {
   return 1
 }
 
+# why_leak OUT: after a leak is reported, the lines of OUT that hold a
+# synthetic canary, the temporary directory or the checkout (at most 8, 200
+# characters each), so that a failure on another platform can be read from
+# its log. They hold test values only, or the runner's own checkout path.
+why_leak () {
+  local line shown=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in
+      *QQ_* | *QQ-BUILD-CANARY* | *"$tmp_parent/"* | *"$crate"*)
+        echo "    | ${line:0:200}"
+        shown=$((shown + 1))
+        if [ "$shown" -ge 8 ]; then break; fi ;;
+    esac
+  done < "$1"
+  if [ "$shown" -eq 0 ]; then echo "    | (no such line)"; fi
+}
+
+# why_leak shows the lines that hold a canary (and the temporary directory,
+# and the checkout), at most 8, and says when there is none.
+{
+  for i in 1 2 3 4 5 6 7 8 9 10; do echo "QQ_LOGIN line $i"; done
+  echo "unrelated"
+} > "$tmp/out"
+if [ "$(why_leak "$tmp/out" | grep -c 'QQ_LOGIN line')" -eq 8 ] \
+   && ! why_leak "$tmp/out" | grep -q unrelated; then ok; else
+  bad "why_leak: not the first 8 lines that hold a canary"
+fi
+printf 'nothing here\n' > "$tmp/out"
+if why_leak "$tmp/out" | grep -qF "(no such line)"; then ok; else
+  bad "why_leak: no note that no line holds a canary"
+fi
+
 # The leak check itself catches a short component: a stand-in output
 # holding only "kQ" is a leak.
 printf 'some output\nkQ\n' > "$tmp/out"
@@ -666,6 +698,7 @@ for setting in CBOR_DET_LIBRARY_TYPE LIBRARY_TYPE; do
     if holds "$tmp/out" QQ-BUILD-CANARY "$tmp_parent/" "$crate" \
        || grep "QQ_LOGIN" "$tmp/out" | grep -qvE "$residual"; then
       leaked "$script.sh with $setting set: a form other than the known one"
+      why_leak "$tmp/out"
     elif [ "$status" -ne 0 ] && grep -qE "$residual" "$tmp/out"; then
       ok
     else
@@ -682,6 +715,7 @@ for value in '\QQ_PARENT\cbor_det\unit.adb' \
      bash scripts/matrix.sh) > "$tmp/out" 2>&1 || status=$?
   if holds "$tmp/out" QQ_ QQ-BUILD-CANARY "$tmp_parent/" "$crate"; then
     leaked "matrix.sh with a path in CBOR_DET_LIBRARY_TYPE"
+    why_leak "$tmp/out"
   elif [ "$status" -ne 0 ] \
        && grep -qx "    ERROR: Compilation failed." "$tmp/out"; then
     ok
