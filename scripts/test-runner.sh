@@ -685,7 +685,24 @@ mkdir -p "$real"
 (cd "$crate" && tar cf - --exclude ./.git --exclude ./obj --exclude ./lib \
    --exclude ./bin --exclude ./tests/obj --exclude ./tests/lib \
    --exclude ./tests/bin .) | (cd "$real" && tar xf -)
-residual='^ *cbor_det\.gpr:[0-9]+:[0-9]+: value "QQ_LOGIN" is illegal for typed string "library_type"$'
+# gprbuild words the echo by platform: an "error: " prefix, the name's
+# case, and a second line about the library kind (seen on Windows).
+residual='^ *cbor_det\.gpr:[0-9]+:[0-9]+: (error: )?(value "QQ_LOGIN" is illegal for typed string "[Ll]ibrary_[Tt]ype"|[Vv]alue QQ_LOGIN is invalid for attribute [Ll]ibrary_[Kk]ind)$'
+printf '%s\n' \
+  '    cbor_det.gpr:13:04: value "QQ_LOGIN" is illegal for typed string "library_type"' \
+  '    cbor_det.gpr:13:04: error: value "QQ_LOGIN" is illegal for typed string "Library_Type"' \
+  '    cbor_det.gpr:16:08: error: Value QQ_LOGIN is invalid for attribute Library_Kind' > "$tmp/forms"
+if [ "$(grep -cE "$residual" "$tmp/forms")" -eq 3 ]; then ok; else
+  bad "the known gprbuild forms are not all accepted"
+fi
+printf '%s\n' \
+  'cbor_det.gpr:13:04: value "QQ_LOGIN" is illegal for typed string "other"' \
+  'other.gpr:13:04: value "QQ_LOGIN" is illegal for typed string "library_type"' \
+  'cbor_det.gpr:13:04: error: Value QQ_LOGIN is invalid for attribute Library_Kind in /QQ_PARENT/x' \
+  'cbor_det.gpr:13:04: value "QQ_LOGIN/x" is illegal for typed string "library_type"' > "$tmp/forms"
+if [ "$(grep -cE "$residual" "$tmp/forms")" -eq 0 ]; then ok; else
+  bad "a form other than the known ones is accepted"
+fi
 for setting in CBOR_DET_LIBRARY_TYPE LIBRARY_TYPE; do
   for script in matrix decoder-measure decoder-tests differential; do
     if [ "$setting" = LIBRARY_TYPE ] && [ "$script" != matrix ]; then

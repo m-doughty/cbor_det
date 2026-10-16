@@ -314,7 +314,8 @@ for a failed compilation; a line holding a slash or a backslash is never
 printed. The whole log stays in `tests/obj`. The limit: a message can
 quote a value the caller gave a project setting (an invalid
 `CBOR_DET_LIBRARY_TYPE` or `LIBRARY_TYPE` is printed back as `value
-"..." is illegal for typed string "library_type"`), so no private value
+"..." is illegal for typed string "library_type"`, or on Windows with an
+`error:` prefix and a second line naming `Library_Kind`), so no private value
 belongs in one. A message that itself holds a slash (one about the
 operator "/") is not shown either; it is in the log.
 
