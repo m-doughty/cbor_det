@@ -2,9 +2,9 @@
 # Every local check of the crate in one run, for Windows x86_64 under Git
 # Bash, with Alire 2.1.1 on the PATH (GNAT 16.1.0, gprbuild 26.0.1 and
 # GNATprove 16.1.0 come from the crate's own manifests) and, for the
-# differential test, Python 3.10 or later. It runs on any platform, but
-# it exists so that the Windows results are gathered the same way each
-# time.
+# differential test, the test runner's self-test and the decoder tests,
+# Python 3.10 or later. It runs on any platform, but it exists so that
+# the Windows results are gathered the same way each time.
 #
 # Run it from a copy of the crate, so that nothing in the working tree is
 # disturbed:
@@ -29,6 +29,18 @@
 #   matrix        scripts/test-matrix.sh, then scripts/matrix.sh
 #   differential  scripts/differential.sh (seed 1), only if Python 3.10
 #                 or later is found; otherwise INCOMPLETE
+#   test-runner   scripts/test-runner.sh: the test runner's own failure
+#                 modes (a missing file reported without its path; no
+#                 pass when nothing was compared); Python 3.10 or later,
+#                 as the differential
+#   decoder-tests scripts/decoder-tests.sh: the decoder against the two
+#                 references (Python 3.10 or later, as the differential)
+#   decoder-measure  scripts/decoder-measure.sh: throughput and stack of
+#                 the decoder, as information (no pass or fail of its own
+#                 beyond running)
+#
+# Nothing the caller supplies (an argument, a step name, ALR, PYTHON) is
+# printed back: a message says what kind of thing was wrong.
 #
 # Every selected step runs even if an earlier one fails. At the end it
 # prints the step names in order, one line per step with its exit status
@@ -53,7 +65,8 @@
 #                 Either may be given more than once; the lists add up.
 #                 The step names are: environment sources-self-test
 #                 leakage-self-test test-version sources leakage version
-#                 test-prove prove test-matrix matrix differential.
+#                 test-prove prove test-matrix matrix differential
+#                 test-runner decoder-tests decoder-measure.
 #   ALR, PYTHON   the alr and python to use (default alr, and the first of
 #                 python3 and python that is 3.10 or later); a PYTHON
 #                 that is set is the only one tried
@@ -62,7 +75,8 @@ set -u
 
 # Every step, in the order run.
 all_steps="environment sources-self-test leakage-self-test test-version \
-sources leakage version test-prove prove test-matrix matrix differential"
+sources leakage version test-prove prove test-matrix matrix differential \
+test-runner decoder-tests decoder-measure"
 
 usage () {
   echo "Usage: scripts/windows-check.sh [--only LIST | --skip LIST]"
@@ -84,7 +98,7 @@ skip=
 while [ $# -gt 0 ]; do
   case "$1" in
     --only|--skip)
-      [ $# -ge 2 ] || usage_error "$1 needs a list of steps"
+      [ $# -ge 2 ] || usage_error "--only or --skip needs a list of steps"
       list=$2
       option=$1
       shift 2
@@ -99,20 +113,20 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     *)
-      usage_error "unknown argument: $1"
+      usage_error "an unknown argument"
       ;;
   esac
   case ",$list," in
-    *,,*) usage_error "$option: an empty step name in \"$list\"" ;;
+    *,,*) usage_error "$option: an empty step name in the list" ;;
   esac
   case "$list" in
-    *[[:space:]]*) usage_error "$option: a space in \"$list\"" ;;
+    *[[:space:]]*) usage_error "$option: a space in the list" ;;
   esac
   names=$(printf '%s' "$list" | tr ',' ' ')
   for n in $names; do
     case " $all_steps " in
       *" $n "*) ;;
-      *) usage_error "$option: unknown step: $n" ;;
+      *) usage_error "$option: an unknown step name (the names are listed below)" ;;
     esac
   done
   if [ "$option" = --only ]; then
@@ -180,7 +194,7 @@ step () {
   for t in $needs; do
     if ! have "$t"; then
       if [ "$t" = alr ]; then
-        echo "$name: INCOMPLETE (not run: alr ($ALR) not found)" | tee -a "$summary"
+        echo "$name: INCOMPLETE (not run: alr (ALR) not found)" | tee -a "$summary"
       else
         echo "$name: INCOMPLETE (not run: $t not found)" | tee -a "$summary"
       fi
@@ -203,22 +217,30 @@ environment () {
   git --version
   bash --version | head -n 1
   perl -v | sed -n 2p
-  echo "python: ${PYTHON:-not found} $("${PYTHON:-false}" --version 2>&1)"
-  "$ALR" --version
+  if [ -n "${PYTHON:-}" ]; then
+    echo "python: $("$PYTHON" --version 2>&1)"
+  else
+    echo "python: not found"
+  fi
+  if ! command -v "$ALR" > /dev/null 2>&1; then
+    echo "alr: not found (ALR)"
+  elif ! "$ALR" --version 2> /dev/null; then
+    echo "alr: could not start (ALR)"
+  fi
   echo "core.symlinks: $(git config core.symlinks)"
   return 0
 }
 
 # Python 3.10 or later: PYTHON if it is set (and then only it), else the
-# first of python3 and python that qualifies; none means the differential
-# is INCOMPLETE.
+# first of python3 and python that qualifies; none means the differential,
+# test-runner and decoder-tests steps are INCOMPLETE.
 python_ok () {
   "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
     > /dev/null 2>&1
 }
 if [ -n "${PYTHON:-}" ]; then
   if ! python_ok "$PYTHON"; then
-    echo "python: $PYTHON is not Python 3.10 or later"
+    echo "python: PYTHON is not Python 3.10 or later"
     PYTHON=
   fi
 else
@@ -238,21 +260,33 @@ step environment "" environment
 # the finds on the PATH in order (the gates use the first that behaves as
 # a POSIX find; Windows' own find is a text search), the first line of
 # find --version, and whether this copy is a git work tree (it need not
-# be: the gates run in find mode, which leaves .git out). A path under the
-# home directory is shown as ~.
-home_tilde () {
-  if [ -n "${HOME:-}" ]; then
-    sed "s|$HOME|~|g"
-  else
-    cat
-  fi
+# be: the gates run in find mode, which leaves .git out). A find is shown
+# by its kind, never by its directory, which could name a user or a
+# private place.
+find_kind () {
+  case "$1" in
+    /usr/bin/find|/bin/find)
+      echo "usr/bin (Git Bash, MSYS or the system's own POSIX find)" ;;
+    */[Ww][Ii][Nn][Dd][Oo][Ww][Ss]/[Ss][Yy][Ss][Tt][Ee][Mm]32/[Ff][Ii][Nn][Dd]*)
+      echo "Windows System32 (a text search, not a POSIX find)" ;;
+    *) echo "other" ;;
+  esac
 }
 {
-  first=$(type -a -p find 2> /dev/null | head -n 1 | home_tilde)
-  echo "find first on PATH: ${first:-none}"
-  type -a -p find 2> /dev/null | sed -n '2,3p' | home_tilde \
-    | sed 's/^/find later on PATH: /'
-  echo "find --version: $(find --version 2>&1 | head -n 1 | home_tilde)"
+  n=0
+  while IFS= read -r f; do
+    n=$((n + 1))
+    [ "$n" -le 3 ] || break
+    echo "find #$n on PATH: $(find_kind "$f")"
+  done < <(type -a -p find 2> /dev/null)
+  if [ "$n" -eq 0 ]; then
+    echo "find #1 on PATH: none"
+  fi
+  case "$(find --version 2>&1 | head -n 1)" in
+    "find (GNU findutils)"*)
+      echo "find --version: $(find --version 2>&1 | head -n 1)" ;;
+    *) echo "find --version: not GNU findutils" ;;
+  esac
   if [ -e .git ]; then
     echo "git work tree: yes (a .git exists in this copy; none is needed)"
   else
@@ -278,6 +312,25 @@ else
     | tee -a "$summary"
   incomplete=1
 fi
+if ! selected test-runner; then
+  not_selected test-runner
+elif [ -n "${PYTHON:-}" ]; then
+  step test-runner "alr" bash scripts/test-runner.sh
+else
+  echo "test-runner: INCOMPLETE (not run: no Python 3.10 or later found)" \
+    | tee -a "$summary"
+  incomplete=1
+fi
+if ! selected decoder-tests; then
+  not_selected decoder-tests
+elif [ -n "${PYTHON:-}" ]; then
+  step decoder-tests "alr" bash scripts/decoder-tests.sh
+else
+  echo "decoder-tests: INCOMPLETE (not run: no Python 3.10 or later found)" \
+    | tee -a "$summary"
+  incomplete=1
+fi
+step decoder-measure "alr" bash scripts/decoder-measure.sh
 echo "not selected:${unselected:- none}" | tee -a "$summary" > /dev/null
 
 echo

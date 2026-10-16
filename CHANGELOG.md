@@ -2,6 +2,23 @@
 
 ## 0.1.0 - 2026-10-11
 
+- The decoder, `Cbor_Det.Decoder`: `Check (Data, Result, Where)`.
+  - Proved: `Result = Ok` exactly when `Accepts (Data)`, that is
+    `Accept_Whole (Data)`; `Where` is `Data'Last + 1` on `Ok`,
+    `Data'First` on an empty input, and an index of `Data` on any other
+    rejection; no run-time error; `Check` always terminates.
+  - Tested, not proved: the `Status` and `Where` of a rejection, against
+    an independent status oracle (`tests/reference/ref_status.py`); the
+    verdict against the reference decoder (its head table, seeded corpora
+    and every input of up to 3 bytes); RFC 8949 Appendix A; boundary
+    inputs; operation counts (`scripts/decoder-tests.sh`).
+  - Measured, as information: throughput and stack
+    (`scripts/decoder-measure.sh`). The speed target is not claimed.
+  - Proof clients, `Cbor_Det.Decoder.Surface`: each clause of `Check`'s
+    contract proved on its own from the contract alone.
+- `scripts/prove.sh` reports the largest step count of every prover on
+  every line and of the summary, and runs the subprograms declared only
+  in a body too.
 - The crate layout, the build matrix, the proof configuration (bounded by
   prover steps, not time) and the CI gates. `Cbor_Det` declares the
   shared types.

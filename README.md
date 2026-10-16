@@ -5,10 +5,27 @@ check encoded CBOR items against the core deterministic encoding
 requirements of RFC 8949 section 4.2.1, within a fixed nesting limit,
 and report the result as a `Status`.
 
-**Status: proof core only.** Version 0.1.0 holds the shared types of
-`Cbor_Det` and the proof core under `Cbor_Det.Proof`: the specification
-of a deterministic item and the lemmas about it. There is no decoder, no
-cursor and no writer yet: nothing a consumer calls to check an input.
+**Status: proof core and decoder.** Version 0.1.0 holds the shared
+types of `Cbor_Det`, the proof core under `Cbor_Det.Proof` (the
+specification of a deterministic item and the lemmas about it) and the
+decoder, `Cbor_Det.Decoder`: `Check (Data, Result, Where)` says whether
+`Data` holds exactly one deterministic item of the profile and nothing
+else, and if not, which rule failed (`Result`, a `Status`) and where
+(`Where`, an index of `Data`). There is no cursor and no writer yet.
+
+```ada
+with Cbor_Det;         use Cbor_Det;
+with Cbor_Det.Decoder;
+
+procedure Example (Data : Bytes) is
+   Result : Status;
+   Where  : Integer;
+begin
+   Cbor_Det.Decoder.Check (Data, Result, Where);
+   --  Result = Ok exactly when Data holds one deterministic item;
+   --  otherwise Where is the index of the first fault.
+end Example;
+```
 
 ## What is proved
 
@@ -65,6 +82,23 @@ provers see, never what they must prove.
   are strictly ascending). Weakening a clause of an exported contract
   that a later proof would need makes a client fail; a few clauses follow
   from the rest of their contract, and no client can need them.
+- **The decoder** (`Cbor_Det.Decoder`): `Check` returns `Ok` exactly
+  when `Accepts (Data)` holds, which is `Accept_Whole (Data)` above (P1:
+  `(Result = Ok) = Accepts (Data)`); `Where` is `Data'Last + 1` on `Ok`,
+  `Data'First` on an empty input (any bounds, null arrays included), and
+  otherwise an index of `Data`; and `Check` always terminates. Its body
+  is one pass that recurses only into nested items (at most `Max_Depth +
+  1` calls active) and judges the members of a container in a loop; each
+  count or length is compared with the bytes left before it is used (a
+  map's count with half of them: a division, never a doubling). Which
+  `Status` a rejection reports, and its exact `Where`, are tested, not
+  proved.
+- **Proof clients of the decoder** (`Cbor_Det.Decoder.Surface`): ghost
+  procedures that each call `Check` and prove, from its contract alone,
+  one clause of it on its own (`Ok` means accepted with `Where = Data'Last
+  + 1`; accepted means `Ok`; a rejection means not accepted; an empty
+  input is `Truncated` at `Data'First`; any other rejection is at an
+  index of `Data`), so that a weaker contract would no longer prove.
 - **No run-time error** in any of it, with or without checks.
 
 ## What is tested
@@ -99,6 +133,30 @@ they ran, and fails if they did not run where they could.
   cost model predicts each input's cost, and the few inputs too costly
   to run are counted and reported, never skipped silently.
 
+- **The decoder**, by `scripts/decoder-tests.sh`, in a plain cell and in
+  the contracts cell (where `Check`'s postcondition also runs):
+  - its verdict against the reference decoder: every input of the
+    reference's head table (67 705, of which 1 104 accepted, both counts
+    pinned), three seeded corpora (every row in the plain cell; in the
+    contracts cell every row the cost model allows, the rest counted)
+    and every input of up to 3 bytes;
+  - its `Status` and `Where` against an independent status oracle
+    (`tests/reference/ref_status.py`, written without access to this
+    crate's code from the precedence table of the decoder's contract):
+    the oracle's corpus, the oracle's answers on the reference's corpora,
+    and boundary inputs (arrays and maps of 65 536 members, an array of
+    1 000 000, map keys that are containers nested 16 deep, maximum
+    lengths and counts, map counts at and around half the bytes left);
+    each input at index 1, at index 1000 and ending at the top of the
+    index range, and the empty input with null bounds anywhere;
+  - RFC 8949 Appendix A, all 81 examples, and a rejection vector for each
+    `Status`, including the overlapping-rule examples;
+  - operation counts (ghost counters, in the contracts cell): on each
+    workload of N bytes the bytes consumed (each head and each string's
+    payload once; a payload is consumed without being read) are N for an
+    accepted input (at most N otherwise) and the bytes compared between
+    map keys at most `Max_Depth` x N; the measured ratios are printed.
+
 ## What is trusted
 
 Nothing beyond the GNAT run-time and the toolchain (GNAT, gprbuild,
@@ -106,8 +164,8 @@ GNATprove and its provers) at the pinned versions below.
 
 ## What is not claimed
 
-- No decoder, cursor or writer exists yet, so nothing here checks,
-  reads or writes an input outside the tests.
+- No cursor and no writer exist yet: the decoder checks an input but
+  does not read values out of it.
 - No round trip and no canonical uniqueness (that two accepted inputs
   denoting the same value are the same bytes) are proved yet.
 - Not "RFC 8949 conformant": the specification covers this profile of
@@ -115,7 +173,46 @@ GNATprove and its provers) at the pinned versions below.
   proved.
 - UTF-8 validity of text strings is not checked.
 - Inputs longer than 2^31-2 bytes are outside the index range.
-- No timing, stack or performance figure is claimed.
+- No timing, stack or performance figure is claimed or proved. The speed
+  target for this crate (less than 100% slower than a comparable C or
+  Rust implementation) is not claimed: no comparison has been made. The
+  figures under "Measured" are information for one machine per platform.
+
+## Concurrency
+
+`Check` reads only its arguments. In a production build it is pure and
+any number of tasks may call it at once. In the contracts build (the
+test cell with assertions and ghost code on) it also updates the ghost
+operation counters, `Cbor_Det.Decoder.Counters`, which are shared
+mutable state: that build is for tests, and calls from several tasks
+would race on the counters.
+
+## Measured (information, not claims)
+
+`scripts/decoder-measure.sh`, in a production cell (`-O3`, run-time
+checks off, no contracts), on one machine per platform. Throughput is
+the median of 11 samples; stack is what `Check` used beyond its caller,
+found with a stack pad (to 64 bytes). The long-string figure is high
+because `Check` reads a string's head and skips its bytes.
+
+| Workload | macOS arm64 | Linux aarch64 | Linux x86_64 (emulated) |
+|---|---|---|---|
+| small message, a map of 6 pairs (23 bytes) | 468 MB/s | 470 MB/s | 265 MB/s |
+| 16 nested containers (28 bytes) | 332 MB/s | 365 MB/s | 151 MB/s |
+| a map of 65 536 pairs (261 869 bytes) | 615 MB/s | 601 MB/s | 316 MB/s |
+| a 1 MB byte string (head only; bytes skipped) | 237 TB/s | 230 TB/s | 105 TB/s |
+| stack, 16 nested containers | 2 624 bytes | 2 352 bytes | 2 288 bytes |
+| stack, arrays of 65 536 and 1 000 000 members | 464 bytes | 432 bytes | 368 bytes |
+| stack, a map of 65 536 pairs | 464 bytes | 432 bytes | 408 bytes |
+
+The Linux figures come from containers on the macOS machine (Linux
+x86_64 under emulation, so far slower than native). In these
+measurements the stack did not grow with width: arrays of 65 536 and
+1 000 000 members took the same stack on each platform (464, 432 and
+368 bytes), and a map of 65 536 pairs about the same (464, 432 and 408
+bytes). The Windows x86_64 figures come from the information step of the
+CI `decoder` job and are not recorded here yet.
+
 
 ## Platforms and toolchain
 
@@ -197,6 +294,29 @@ unknown step name or option exits 4 with nothing run.
 `bash scripts/test-windows-check.sh` tests those exit statuses.
 
 `CBOR_DET_SEEDS` chooses the corpus seeds (default 1).
+
+```sh
+bash scripts/test-runner.sh       # the runner fails on a missing, empty or short input, without printing its path (Python 3.10+)
+bash scripts/decoder-tests.sh     # the decoder against both references (Python 3.10+)
+bash scripts/decoder-measure.sh   # throughput and stack, as information
+```
+
+`decoder-tests.sh` runs the corpus seeds 1 to 3 by default
+(`CBOR_DET_SEEDS`); in the contracts cell it runs the corpus rows whose
+predicted cost is at most `CBOR_DET_DECODER_COST_LIMIT` (default
+1 000 000 calls) and counts the rest.
+
+When a build fails, `matrix.sh`, `differential.sh`, `decoder-tests.sh`
+and `decoder-measure.sh` print at most the first 40 lines of its log
+that have a known form: a compiler message on one of the crate's own
+files (`unit.adb:12:4: ...`), or one of gprbuild's and alr's fixed lines
+for a failed compilation; a line holding a slash or a backslash is never
+printed. The whole log stays in `tests/obj`. The limit: a message can
+quote a value the caller gave a project setting (an invalid
+`CBOR_DET_LIBRARY_TYPE` or `LIBRARY_TYPE` is printed back as `value
+"..." is illegal for typed string "library_type"`), so no private value
+belongs in one. A message that itself holds a slash (one about the
+operator "/") is not shown either; it is in the log.
 
 ## Gates
 

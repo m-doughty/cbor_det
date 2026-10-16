@@ -112,6 +112,58 @@ jobs:
           PYTHON: python
         run: bash scripts/differential.sh
 
+  decoder:
+    name: decoder (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    # Not measured on the runners yet: the tests took 4 minutes locally
+    # (macOS arm64), the measurements seconds. A generous placeholder, not
+    # a result; a run that hits it is an error to rerun.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64,   os: ubuntu-24.04 }
+          - { name: linux-aarch64,  os: ubuntu-24.04-arm }
+          - { name: macos-arm64,    os: macos-15 }
+          - { name: windows-x86_64, os: windows-2022 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: alire-project/setup-alire@v4
+        with:
+          version: ${{ env.ALIRE_VERSION }}
+          toolchain: ${{ env.TOOLCHAIN }}
+      - name: Generate Alire configuration
+        shell: bash
+        working-directory: tests
+        run: alr -n build
+      # The decoder against the reference decoder (verdicts on its head
+      # table, corpora and every input of up to 3 bytes) and the status
+      # oracle (Status and Where), in a plain cell and the contracts
+      # cell, with its operation counts and boundary inputs.
+      # The runner's own failure modes: a missing input file is reported
+      # without its path, and an empty or short corpus or head table, or
+      # a blank seed list, fails rather than passing having compared
+      # nothing.
+      - name: Test runner self-test
+        shell: bash
+        env:
+          PYTHON: python
+        run: bash scripts/test-runner.sh
+      - name: Decoder tests against the two references
+        shell: bash
+        env:
+          PYTHON: python
+        run: bash scripts/decoder-tests.sh
+      # Throughput and stack, printed as information: no limit is set
+      # from them.
+      - name: Decoder measurements (information only)
+        shell: bash
+        run: bash scripts/decoder-measure.sh
+
   gates:
     name: gates (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

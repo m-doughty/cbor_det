@@ -47,7 +47,10 @@ Usage:
       CLASSIFIED. The validator on small timings: proportional times pass;
       identical rows, a negative correlation, constant counts or times,
       and a single row of 0.1 s or more each fail. A failed check prints
-      the exit status and the last 20 lines of output of the run it made.
+      the exit status of the run it made, the name of the exception that
+      ended it (if one did), and the last of its own messages (lines
+      beginning "cost_model: " or "model: ", holding no slash or
+      backslash); never a traceback, which names files by their path.
   cost_model.py validate --timings FILE
       FILE holds "count<TAB>seconds" per row, as measured by the test
       runner. Prints the fit of seconds against the count (least squares
@@ -66,7 +69,16 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import re
 import sys
+
+
+class _Parser(argparse.ArgumentParser):
+    """A parser whose errors never print the arguments given."""
+
+    def error(self, message: str) -> None:
+        self.exit(2, "cost_model.py: the arguments are not valid "
+                     "(see --help)\n")
 
 MAX_DEPTH = 16
 NATURAL_LAST = 2**31 - 1
@@ -242,7 +254,13 @@ def classify(source: str, target: str, limit: int) -> int:
                 fields = line.rstrip("\r\n").split("\t")
                 if len(fields) != 3:
                     raise SystemExit(f"cost_model: malformed corpus row {number}")
-                data = bytes.fromhex(fields[0])
+                # Never the row's text: only its number.
+                try:
+                    data = bytes.fromhex(fields[0])
+                    reference_end = int(fields[1])
+                except ValueError:
+                    raise SystemExit(
+                        f"cost_model: malformed corpus row {number}") from None
                 shown = fields[0]
                 if len(shown) > 64:
                     shown = shown[:64] + "..."
@@ -256,7 +274,6 @@ def classify(source: str, target: str, limit: int) -> int:
                         "main thread's stack as the platform sets it); no "
                         "class is written for this row or any other") from None
                 model_end = end if end is not None else -1
-                reference_end = int(fields[1])
                 if model_end != reference_end:
                     cls = "unmodelled"
                     print(f"cost_model: row {number} (bytes {shown or 'none'}): "
@@ -288,9 +305,14 @@ def validate(path: str) -> None:
     rows is reported as insufficient evidence, and fails too."""
     pairs = []
     with open(path, encoding="ascii") as rows:
-        for line in rows:
-            count, seconds = line.split()
-            pairs.append((int(count), float(seconds)))
+        for number, line in enumerate(rows, start=1):
+            # Never the row's text: only its number.
+            try:
+                count, seconds = line.split()
+                pairs.append((int(count), float(seconds)))
+            except ValueError:
+                raise SystemExit(
+                    f"cost_model: malformed timing row {number}") from None
     if len(pairs) < 2:
         raise SystemExit("cost_model: too few timings to validate")
     slope = (sum(c * s for c, s in pairs) / sum(c * c for c, _ in pairs))
@@ -411,8 +433,9 @@ def selftest() -> None:
     and the limit, with no classified file left; the validator passes
     times that follow the counts and fails an undefined or low
     correlation, constant times, and too few rows of 0.1 s or more. A
-    failed check prints the child's exit status and the last lines of its
-    output."""
+    failed check prints the child's exit status, the name of the exception
+    that ended it, and its own last messages; nothing else of its output
+    (a traceback names files by their absolute path)."""
     import subprocess
     import tempfile
     script = os.path.abspath(__file__)
@@ -440,18 +463,39 @@ def selftest() -> None:
             leftovers = sorted(set(os.listdir(d)) - {"corpus.tsv"})
             return p.returncode, p.stdout + p.stderr, out, leftovers
 
+    def child_lines(text):
+        """What of a child's output may be shown: the name of the
+        exception that ended it, if it ended in a traceback, and its last
+        20 own messages. A line holding a slash or a backslash, or
+        anything but printable ASCII, is never shown."""
+        lines = text.splitlines()
+        shown = []
+        header = "Traceback (most recent call last):"
+        if header in lines:
+            # The exception's line is the first after the last traceback's
+            # header that is not indented; only its name is shown (its
+            # message can hold anything).
+            last = len(lines) - 1 - lines[::-1].index(header)
+            name = None
+            for line in lines[last + 1:]:
+                if not line.startswith(" "):
+                    name = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_.]*)(?::.*)?",
+                                        line)
+                    break
+            shown.append("its exception: " + (name.group(1) if name
+                                              else "(not shown)"))
+        own = [line for line in lines
+               if re.fullmatch(r"(?:cost_model|model): [ -~]*", line)
+               and "/" not in line and "\\" not in line]
+        return shown + own[-20:]
+
     def expect(cond, what, code, text):
         nonlocal checks
         checks += 1
         if not cond:
-            home = os.path.expanduser("~")
-            if home not in ("", "~", os.sep):
-                text = text.replace(home, "~")
-            lines = text.splitlines()[-20:]
             print(f"cost_model selftest: the failed check's child exited "
-                  f"{code}; the last {len(lines)} lines of its output:",
-                  file=sys.stderr)
-            for line in lines:
+                  f"{code}", file=sys.stderr)
+            for line in child_lines(text):
                 print(f"    {line}", file=sys.stderr)
             raise SystemExit(f"cost_model selftest FAILED: {what}")
 
@@ -533,8 +577,8 @@ def selftest() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = _Parser(description=__doc__,
+                     formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     c = commands.add_parser("classify")
     c.add_argument("--in", dest="source", required=True)

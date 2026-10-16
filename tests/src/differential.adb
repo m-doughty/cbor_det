@@ -108,6 +108,8 @@ package body Differential is
       use Ada.Real_Time;
    begin
       if not Enabled then
+         Fail ("corpus: nothing was compared: this mode needs the library's"
+               & " contracts (the contracts cell)");
          return;
       end if;
       Open (F, In_File, Path);
@@ -124,7 +126,14 @@ package body Differential is
             Count     : constant String := Field (Line, 5);
          begin
             Line_No := Line_No + 1;
-            if Class = "run" then
+            if Count'Length not in 1 .. 18
+              or else (for some C of Count => C not in '0' .. '9')
+            then
+               --  The count is not printed, nor written: it is the file's
+               --  text.
+               Fail ("row" & Line_No'Image & ": the predicted count is not a"
+                     & " decimal number");
+            elsif Class = "run" then
                Rows_Run := Rows_Run + 1;
                if B'Length = 0 then
                   Empty := Empty + 1;
@@ -165,13 +174,17 @@ package body Differential is
                      & " end differs from the reference's"
                      & Ref_End'Image & " (bytes " & To_Hex (B) & ")");
             else
-               Fail ("row" & Line_No'Image & ": unknown class " & Class);
+               --  The class is not printed: it is the file's text.
+               Fail ("row" & Line_No'Image & ": an unknown class");
             end if;
          end;
       end loop;
       Close (F);
       if Timings /= "" then
          Close (T);
+      end if;
+      if Rows_Run = 0 then
+         Fail ("corpus: nothing was compared (no row of class run)");
       end if;
       Put_Line ("corpus: rows" & Line_No'Image & ", compared" & Rows_Run'Image
                 & " (accepted" & Accepted'Image & ", refused" & Refused'Image
@@ -248,6 +261,11 @@ package body Differential is
          end;
       end loop;
       Close (F);
+      if Compared + Not_Heads = 0 then
+         --  Rows that are empty, or of major types 6 and 7, are counted
+         --  but not compared.
+         Fail ("heads: nothing was compared (no row of major type 0 to 5)");
+      end if;
       Put_Line ("heads: rows" & Line_No'Image & ", heads compared"
                 & Compared'Image & ", refused by both" & Not_Heads'Image
                 & ", major 6 or 7 (no reference head)" & Major_6_7'Image
@@ -270,11 +288,20 @@ package body Differential is
       Before  : constant Natural := Failed;
    begin
       if not Enabled then
+         Fail ("exhaustive: nothing was compared: this mode needs the"
+               & " library's contracts (the contracts cell)");
          Free (Data);
          return;
       end if;
       Ada.Streams.Stream_IO.Open (F, Ada.Streams.Stream_IO.In_File, Path);
       Ada.Streams.Stream_IO.Read (F, Data.all, Last);
+      if Last = Total and then not Ada.Streams.Stream_IO.End_Of_File (F) then
+         Ada.Streams.Stream_IO.Close (F);
+         Fail ("exhaustive: the verdict file has more bytes than"
+               & Total'Image);
+         Free (Data);
+         return;
+      end if;
       Ada.Streams.Stream_IO.Close (F);
       if Last /= Total then
          Fail ("exhaustive: the verdict file has" & Last'Image

@@ -2,15 +2,19 @@
 # The proof of the crate, per unit and per subprogram, from cold.
 #
 # For every unit in src/ (spec and body together), then for every
-# subprogram declared at the top level of every spec, one gnatprove
-# command, each from cold: every proof session of the crate (the
+# subprogram declared at the top level of every spec, and for every one
+# declared at the top level of a body and not in its spec (at its first
+# declaration), one gnatprove command, each from cold: every proof session of the crate (the
 # directories obj/*/gnatprove and lib/*/gnatprove) is deleted before it.
 # The provers' limits are those of cbor_det.gpr: steps only (--steps), no
 # time limit (--timeout=0), three provers, every check an error. The
 # number of parallel proof jobs is explicit (--jobs, default 2).
 #
 # For each command it prints the checks proved, the checks not proved and
-# the largest number of steps any check took (from --report=statistics).
+# the largest number of steps any check took: the largest over every
+# prover on every line of the output (--report=statistics lists each
+# prover that worked on a check, the largest not necessarily last) and
+# the summary's own "max steps used for successful proof".
 # It fails if any check is not proved; if gnatprove fails or is killed by
 # a signal; if the command wrote no summary (gnatprove.out), or one
 # without a well-formed Total line; if the summary does not show the unit
@@ -57,6 +61,10 @@ crate=$(pwd -P)
 logs="$crate/tests/obj/prove"
 mkdir -p "$logs"
 cd tests
+if ! command -v "$ALR" > /dev/null 2>&1; then
+  echo "prove: alr (ALR) cannot be run"
+  exit 2
+fi
 "$ALR" -n build > "$logs/build.txt" 2>&1 \
   || { echo "prove: the tests crate does not build (see tests/obj/prove/build.txt)"; exit 2; }
 
@@ -108,7 +116,11 @@ run () {
     tripped=1
     return 0
   fi
-  steps=$(perl -ne '$m = $1 if /and (\d+) steps?\)/ && $1 > ($m // 0); END { print $m // 0 }' "$out")
+  summary=$(ls "$crate"/obj/*/gnatprove/gnatprove.out 2> /dev/null | head -n 1 || true)
+  steps=$(perl -ne '
+      while (/and (\d+) steps?\b/g) { $m = $1 if $1 > ($m // 0) }
+      $m = $1 if /^max steps used for successful proof: (\d+)/ && $1 > ($m // 0);
+      END { print $m // 0 }' "$out" ${summary:+"$summary"})
   proved=$(grep -c '^ *info: .* proved' "$out" || true)
   unproved=$(grep -cE '^ *(medium|high|low): ' "$out" || true)
   echo "$name: proved $proved, not proved $unproved, max steps $steps, exit $status"
@@ -122,7 +134,6 @@ run () {
   # The summary must exist, have a well-formed Total line, show the unit
   # or subprogram as analysed, and count exactly the checks the output
   # reports, proved or not.
-  summary=$(ls "$crate"/obj/*/gnatprove/gnatprove.out 2> /dev/null | head -n 1 || true)
   if [ -z "$summary" ]; then
     echo "$name: no summary (gnatprove.out) was written"
     failed=1
@@ -201,6 +212,20 @@ if [ "$units_only" = no ]; then
     while read -r line name; do
       run "subp-$unit-$name" subp "$spec:$line" --limit-subp="$spec:$line"
     done < <(grep -n -E '^   (procedure|function) [A-Za-z_0-9]+' "$crate/src/$spec" \
+             | sed -E 's/^([0-9]+):   (procedure|function) ([A-Za-z_0-9]+).*/\1 \3/' \
+             | awk '!seen[$2]++')
+  done
+  # Subprograms declared at the top level of a body and not in its spec,
+  # at their first declaration in the body.
+  for spec in $specs; do
+    unit=${spec%.ads}
+    body="$unit.adb"
+    [ -f "$crate/src/$body" ] || continue
+    while read -r line name; do
+      if ! grep -q -E "^   (procedure|function) $name([^A-Za-z_0-9]|\$)" "$crate/src/$spec"; then
+        run "subp-$unit-$name" subp "$body:$line" --limit-subp="$body:$line"
+      fi
+    done < <(grep -n -E '^   (procedure|function) [A-Za-z_0-9]+' "$crate/src/$body" \
              | sed -E 's/^([0-9]+):   (procedure|function) ([A-Za-z_0-9]+).*/\1 \3/' \
              | awk '!seen[$2]++')
   done

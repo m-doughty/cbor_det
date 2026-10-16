@@ -8,7 +8,9 @@
 #   truncated summary (no Total line); a summary that counts checks the
 #   output never proved; a subprogram command that analysed nothing; and
 #   a tripped wall-clock guard (an error, exit status 2, not a failed
-#   proof).
+#   proof). And that the largest step count it reports is the largest of
+#   every prover on every line and of the summary's own figure, and that
+#   a subprogram declared only in a body gets its own command.
 # Runs under /bin/bash by default (Bash 3.2 on macOS).
 #
 # Usage: scripts/test-prove.sh
@@ -25,7 +27,8 @@ mkdir -p "$tmp/crate/scripts" "$tmp/crate/src" "$tmp/crate/tests" "$tmp/mocks"
 cp scripts/prove.sh "$tmp/crate/scripts/"
 printf 'package A with SPARK_Mode is\n   procedure P;\n   function F return Boolean;\nend A;\n' \
   > "$tmp/crate/src/a.ads"
-printf 'package body A with SPARK_Mode is\nend A;\n' > "$tmp/crate/src/a.adb"
+printf 'package body A with SPARK_Mode is\n   procedure Inner;\n   procedure Inner is null;\nend A;\n' \
+  > "$tmp/crate/src/a.adb"
 
 # The stand-in prints what gnatprove prints with --report=statistics and
 # writes the summary file gnatprove.out, as MOCK_MODE says.
@@ -56,7 +59,11 @@ case "$MOCK_MODE" in
   proved-zero) total=3; proved_lines=0 ;;
 esac
 if [ "$proved_lines" -eq 1 ]; then
-  echo ' info: precondition proved (Z3: 1 VC in max 0.0 seconds and 42 steps)'
+  case "$MOCK_MODE" in
+    multi-prover)
+      echo ' info: postcondition proved (CVC5: 5 VC in max 0.1 seconds and 866 steps; Trivial: 1 VC in max 0.0 seconds and 2 steps; Z3: 5 VC in max 0.0 seconds and 21 steps)' ;;
+    *) echo ' info: precondition proved (Z3: 1 VC in max 0.0 seconds and 42 steps)' ;;
+  esac
 fi
 {
   echo 'SPARK Analysis results        Total        Flow   Provers   Justified   Unproved'
@@ -66,6 +73,9 @@ fi
     *) printf 'Total             %s           .    %s (100%%)           %s          %s\n' \
          "$total" "$total" "$justified" "$unproved" ;;
   esac
+  if [ "$MOCK_MODE" = summary-max ]; then
+    echo 'max steps used for successful proof: 5000'
+  fi
   echo 'Analyzed 1 unit'
   if [ -n "$subp" ]; then
     if [ "$MOCK_MODE" = not-analysed ]; then
@@ -119,13 +129,19 @@ check proved-zero proved-zero "--units-only" 1 "the summary counts 3 checks but 
 check not-analysed not-analysed "" 1 "not analysed"
 check guard slow "--guard 1 --units-only" 2 "GUARD TRIPPED"
 check jobs pass "--jobs 0" 2 "--jobs must be a positive number"
+# The largest step count: of every prover on a line, not the last one
+# listed; and the summary's own figure where that is larger.
+check steps-every-prover multi-prover "--units-only" 0 "max steps 866,"
+check steps-summary summary-max "--units-only" 0 "max steps 5000,"
 
-# One command per unit, then one per subprogram declaration (P and F),
-# each with the job cap.
+# One command per unit, then one per subprogram declaration (P and F in
+# the spec, Inner declared only in the body, at its declaration), each
+# with the job cap.
 if [ "$(grep -c -- '-j2 --report=statistics -u a.ads a.adb' "$tmp/pass/calls")" -eq 1 ] \
    && [ "$(grep -c -- '--limit-subp=a.ads:2' "$tmp/pass/calls")" -eq 1 ] \
    && [ "$(grep -c -- '--limit-subp=a.ads:3' "$tmp/pass/calls")" -eq 1 ] \
-   && [ "$(wc -l < "$tmp/pass/calls")" -eq 3 ]; then
+   && [ "$(grep -c -- '--limit-subp=a.adb:2' "$tmp/pass/calls")" -eq 1 ] \
+   && [ "$(wc -l < "$tmp/pass/calls")" -eq 4 ]; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))

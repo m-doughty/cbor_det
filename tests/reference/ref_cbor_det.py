@@ -16,6 +16,14 @@ import sys
 from typing import Iterator
 
 
+class _Parser(argparse.ArgumentParser):
+    """A parser whose errors never print the arguments given."""
+
+    def error(self, message: str) -> None:
+        self.exit(2, "ref_cbor_det.py: the arguments are not valid "
+                     "(see --help)\n")
+
+
 MAX_ARGUMENT = (1 << 64) - 1
 ARGUMENT_BOUNDARIES = (0, 1, 23, 24, 255, 256, 65535, 65536,
                        (1 << 32) - 1, 1 << 32, MAX_ARGUMENT)
@@ -532,7 +540,7 @@ def selftest() -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _Parser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     corpus = commands.add_parser("corpus")
     corpus.add_argument("--seed", required=True, type=int)

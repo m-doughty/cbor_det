@@ -8,7 +8,9 @@
 --  reference never sees this crate's code, and this crate never sees the
 --  reference's. Each mode prints its counts and adds its failures to the
 --  runner's. Corpus and Exhaustive call the library's ghost code, so they
---  run only in the contracts cell (Ran tells).
+--  run only in the contracts cell (Ran tells); elsewhere, and on a file
+--  that leaves nothing to compare, a mode fails: a run that compared
+--  nothing is never a pass.
 
 package Differential is
 

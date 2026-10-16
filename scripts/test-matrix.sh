@@ -18,6 +18,7 @@ cp scripts/matrix.sh "$tmp/scripts/"
 cat > "$tmp/mocks/alr" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "$*" = --version ]; then echo "alr 2.1.1"; exit 0; fi
 [ "$#" -eq 5 ]
 [ "$1" = -n ]
 [ "$2" = build ]

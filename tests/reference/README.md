@@ -8,17 +8,22 @@ checked), arrays, maps with keys of any kind in bytewise order, `false`,
 was written without access to this crate's code, and shares none with
 it. It uses Python's standard library only (Python 3.10 or later).
 
-It is kept as received with one change: the display labels of three
-RFC 8949 Appendix A examples (lines 202 to 204: the one-character text
-strings U+00FC, U+6C34 and U+10151) are written with Python `\u` and
-`\U` escapes instead of the characters themselves, so that the file is
-ASCII. The escapes denote the same strings, so the module's values are
-unchanged: the escaped file writes byte for byte the same corpora (seeds
-1 and 2), head table and self-test output as the original. Nothing else
-differs.
+It is kept as received with two changes:
+
+- the display labels of three RFC 8949 Appendix A examples (the
+  one-character text strings U+00FC, U+6C34 and U+10151) are written
+  with Python `\u` and `\U` escapes instead of the characters
+  themselves, so that the file is ASCII. The escapes denote the same
+  strings, so the module's values are unchanged;
+- its command line parser, on an error, prints a fixed message (the
+  arguments are not valid) instead of argparse's, which quotes the
+  argument given.
+
+The kept file writes byte for byte the same corpora (seeds 1 and 2),
+head table and self-test output as the original. Nothing else differs.
 
     as received:  aa52b799511abb2676c1e02d7b47d1f48131fa949e6786ae0214e3b2bd88d696
-    as kept here: 287a37add851d40c2dd980f7ce17d6dadae7ba1d657927658816eaea9ba597fe
+    as kept here: 36f1d76b9cf4a96a10104ecbb5e108624a7d1d0f34b4eb3f365f2daf893edd89
 
 `scripts/differential.sh` refuses to run unless the file is the one kept
 here. Any tooling around it lives in other files.
@@ -41,6 +46,46 @@ here. Any tooling around it lives in other files.
 - `heads --out FILE`: a table of heads, one per line.
 - `selftest`: its own checks.
 
+## The status oracle
+
+`ref_status.py` is a second, independent program: for any buffer it
+reports the first fault in decode order, as a status and a 0-based
+position, or `Ok`. It was written blind, from RFC 8949 and the decoder's
+precedence table only, by a second author without access to this
+crate's code, and shares none with it. It holds two implementations (a
+recursive one, the oracle, and one with an explicit stack) that its
+self-test checks against each other. Standard library only (Python 3.10
+or later).
+
+It is kept as received with three changes:
+
+- where its comments and four self-test labels named one of its author's
+  decisions by a short code, a letter and a digit, the code is replaced
+  by the neutral words "owed-member decision" (or "owed" in a label);
+- `classify`, on a line whose first field is not hex bytes, prints the
+  line's number and a fixed message instead of the field;
+- its command line parser, on an error, prints a fixed message (the
+  arguments are not valid) instead of argparse's, which quotes the
+  argument given.
+
+The program's values are unchanged: the kept file writes byte for byte
+the same corpora (seeds 1, 2 and 3), classifies the same rows the same
+way and passes the same self-test as the original.
+
+    as received:  5e313c5a10ec1e3f6903bfffa314f36b555055d5bc02e7dbc0dc6b38f44675f9
+    as kept here: 6dc6f3064139acdc6fbf3f139a94bf59062fb68f3b71edccff9acf1231fdcb9f
+
+- `classify --in FILE --out FILE`: the status and position for the
+  bytes in the first field of each line.
+- `corpus --seed N --out FILE`: a corpus with every buffer of up to 2
+  bytes, nesting around the depth bound, every head form at argument
+  boundaries, counts, keys, faults, owed members and random items, each
+  with its status and position.
+- `selftest`: its own checks.
+
+`scripts/decoder-tests.sh` refuses to run unless both files are the ones
+kept here.
+
 ## The files beside it
 
 - `cost_model.py` predicts how long the library's ghost predicate takes
@@ -49,6 +94,11 @@ here. Any tooling around it lives in other files.
   the times measured.
 - `exhaustive.py` writes the reference's verdict on every input of 0 to
   3 bytes, for the runner to compare.
+- `boundary.py` writes the boundary inputs for the decoder (wide arrays
+  and maps, nested container keys, maximum lengths and counts, map counts
+  around half the bytes left); what each should give is the status
+  oracle's to say.
 
-Run everything with `scripts/differential.sh`. Generated files go to
+Run them with `scripts/differential.sh` (the ghost predicate) and
+`scripts/decoder-tests.sh` (the decoder). Generated files go to
 `tests/obj/differential`, which is not part of the repository.

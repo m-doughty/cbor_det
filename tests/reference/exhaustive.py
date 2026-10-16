@@ -24,6 +24,14 @@ import os
 import sys
 
 
+class _Parser(argparse.ArgumentParser):
+    """A parser whose errors never print the arguments given."""
+
+    def error(self, message: str) -> None:
+        self.exit(2, "exhaustive.py: the arguments are not valid "
+                     "(see --help)\n")
+
+
 def load_reference():
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "ref_cbor_det.py")
@@ -35,8 +43,8 @@ def load_reference():
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = _Parser(description=__doc__,
+                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     ref = load_reference()
