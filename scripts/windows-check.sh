@@ -38,6 +38,9 @@
 #   decoder-measure  scripts/decoder-measure.sh: throughput and stack of
 #                 the decoder, as information (no pass or fail of its own
 #                 beyond running)
+#   model-tests   scripts/model-tests.sh: the value relation against
+#                 the denotation oracle (Python 3.10 or later, as the
+#                 differential)
 #
 # Nothing the caller supplies (an argument, a step name, ALR, PYTHON) is
 # printed back: a message says what kind of thing was wrong.
@@ -66,7 +69,7 @@
 #                 The step names are: environment sources-self-test
 #                 leakage-self-test test-version sources leakage version
 #                 test-prove prove test-matrix matrix differential
-#                 test-runner decoder-tests decoder-measure.
+#                 test-runner decoder-tests decoder-measure model-tests.
 #   ALR, PYTHON   the alr and python to use (default alr, and the first of
 #                 python3 and python that is 3.10 or later); a PYTHON
 #                 that is set is the only one tried
@@ -76,7 +79,7 @@ set -u
 # Every step, in the order run.
 all_steps="environment sources-self-test leakage-self-test test-version \
 sources leakage version test-prove prove test-matrix matrix differential \
-test-runner decoder-tests decoder-measure"
+test-runner decoder-tests decoder-measure model-tests"
 
 usage () {
   echo "Usage: scripts/windows-check.sh [--only LIST | --skip LIST]"
@@ -233,7 +236,7 @@ environment () {
 
 # Python 3.10 or later: PYTHON if it is set (and then only it), else the
 # first of python3 and python that qualifies; none means the differential,
-# test-runner and decoder-tests steps are INCOMPLETE.
+# test-runner, decoder-tests and model-tests steps are INCOMPLETE.
 python_ok () {
   "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
     > /dev/null 2>&1
@@ -331,6 +334,15 @@ else
   incomplete=1
 fi
 step decoder-measure "alr" bash scripts/decoder-measure.sh
+if ! selected model-tests; then
+  not_selected model-tests
+elif [ -n "${PYTHON:-}" ]; then
+  step model-tests "alr" bash scripts/model-tests.sh
+else
+  echo "model-tests: INCOMPLETE (not run: no Python 3.10 or later found)" \
+    | tee -a "$summary"
+  incomplete=1
+fi
 echo "not selected:${unselected:- none}" | tee -a "$summary" > /dev/null
 
 echo

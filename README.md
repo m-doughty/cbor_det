@@ -5,10 +5,11 @@ check encoded CBOR items against the core deterministic encoding
 requirements of RFC 8949 section 4.2.1, within a fixed nesting limit,
 and report the result as a `Status`.
 
-**Status: proof core and decoder.** Version 0.1.0 holds the shared
-types of `Cbor_Det`, the proof core under `Cbor_Det.Proof` (the
-specification of a deterministic item and the lemmas about it) and the
-decoder, `Cbor_Det.Decoder`: `Check (Data, Result, Where)` says whether
+**Status: proof core, value model and decoder.** Version 0.1.0 holds
+the shared types of `Cbor_Det`, the proof core under `Cbor_Det.Proof`
+(the specification of a deterministic item, the value an accepted item
+denotes, and the lemmas about them, canonical uniqueness among them) and
+the decoder, `Cbor_Det.Decoder`: `Check (Data, Result, Where)` says whether
 `Data` holds exactly one deterministic item of the profile and nothing
 else, and if not, which rule failed (`Result`, a `Status`) and where
 (`Where`, an index of `Data`). There is no cursor and no writer yet.
@@ -33,7 +34,8 @@ GNATprove proves every check of every unit, from cold, bounded by prover
 steps only, with nothing assumed: no `pragma Assume`, no justified
 check, no `SPARK_Mode => Off`, no imported body. The only GNATprove
 annotations are `Hide_Info` and `Unhide_Info`, which choose what the
-provers see, never what they must prove.
+provers see, never what they must prove. One GNATprove warning is
+silenced, with its reason, in one place (see "What is trusted").
 
 - **The specification.** `Cbor_Det.Proof.Det.Det_End (B, P, D)` is the
   end (one past the last byte) of the deterministic item that starts at
@@ -70,10 +72,44 @@ provers see, never what they must prove.
   buffer and past the start; runs of members (start, step, prefix,
   monotonicity, failure propagation); the key-order rule one key at a
   time, and that it depends only on the bytes compared; and the algebra
-  of equal slices. Within `Cbor_Det.Proof.Det` and in the proof clients
-  below, the recursive definitions are hidden from the provers and opened
-  one step at a time by these lemmas; the proofs in
-  `Cbor_Det.Proof.Transport` see their bodies.
+  of equal slices. Within `Cbor_Det.Proof.Det`, in `Cbor_Det.Proof.Model`
+  and `Cbor_Det.Proof.Unique`, and in the proof clients below, the
+  recursive definitions are hidden from the provers and opened one step
+  at a time by these lemmas; the proofs in `Cbor_Det.Proof.Transport` see
+  their bodies.
+- **The value an item denotes** (`Cbor_Det.Proof.Model`): `Same (B1, P1,
+  B2, P2, D)` says that the accepted items at `P1` in `B1` and at `P2` in
+  `B2` denote the same value. There is no value object: the value is a
+  relation between two encodings. The kinds are kept apart (the major
+  types must be equal), so the integer 1 is never the same as `true`, and
+  a byte string never the same as a text string. Within a kind: an
+  integer is its sign and magnitude (the major type and the argument); a
+  byte or text string is its bytes; an array is its members in order; a
+  map is the set of its key/value pairs in no order, every pair of each
+  matched by a pair of the other with the same key and the same value,
+  keys of any kind, containers included; `false`, `true` and `null` are
+  themselves. Neither the width of a head nor the place of an item plays
+  a part.
+- **Canonical uniqueness** (`Cbor_Det.Proof.Unique`, P4):
+  `Lemma_CU_Whole (B1, B2)`: two buffers, with any bounds, each accepted
+  whole (`Accept_Whole`), whose items denote the same value (`Same` at
+  `Max_Depth`), have the same length and the same bytes, byte for byte.
+  So a value has at most one accepted encoding. It rests on `Lemma_CU`,
+  the same for accepted items at any place in any buffers, by induction
+  on the depth; for maps, on the strict order of keys (each key below
+  every later key, so no two keys are the same bytes), on the key match
+  as sets, which two ascending orders turn into the same keys in the same
+  order, and on the values matched under those keys.
+- **The converse** (`Lemma_Same_Of_Bytes`, `Lemma_Same_Of_Bytes_Whole`):
+  two accepted items that are the same bytes, at any places in any
+  buffers (a copy with other bounds included), denote the same value; and
+  `Lemma_Same_Iff_Bytes_Whole` states both directions at once: of two
+  inputs accepted whole, `Same` holds exactly when they have the same
+  length and the same bytes.
+- **Reflexivity** (`Lemma_Same_Refl`): `Same` holds between every
+  accepted item and itself, for every kind, so it is never vacuously
+  false for a kind (which would make the uniqueness above say nothing
+  about it).
 - **Proof clients** (`Cbor_Det.Proof.Surface`): ghost procedures that
   each consume lemma contracts as a later proof will, with the
   definitions hidden, and prove from them alone the guarantees later
@@ -82,6 +118,13 @@ provers see, never what they must prove.
   are strictly ascending). Weakening a clause of an exported contract
   that a later proof would need makes a client fail; a few clauses follow
   from the rest of their contract, and no client can need them.
+- **Proof clients of the value relation and uniqueness**
+  (`Cbor_Det.Proof.Model_Surface`): for every subprogram of
+  `Cbor_Det.Proof.Model` and `Cbor_Det.Proof.Unique` with a
+  postcondition, a ghost procedure that calls it and asserts each
+  conjunct of the postcondition on its own, with the definitions hidden;
+  so a weaker postcondition no longer proves, except for the few
+  conjuncts that follow from the rest of their contract.
 - **The decoder** (`Cbor_Det.Decoder`): `Check` returns `Ok` exactly
   when `Accepts (Data)` holds, which is `Accept_Whole (Data)` above (P1:
   `(Result = Ok) = Accepts (Data)`); `Where` is `Data'Last + 1` on `Ok`,
@@ -157,17 +200,59 @@ they ran, and fails if they did not run where they could.
     accepted input (at most N otherwise) and the bytes compared between
     map keys at most `Max_Depth` x N; the measured ratios are printed.
 
+- **The value relation**, by `scripts/model-tests.sh` (and the CI job
+  `model`), against an independent denotation oracle
+  (`tests/reference/ref_denotation.py`, written without access to this
+  crate's code, with values tagged so that kinds stay apart and maps are
+  unordered sets of pairs): `Same` itself, executed with the library's
+  contracts on, against the oracle's label on every pair of its two pair
+  files: 22 000 pairs of accepted inputs from a seeded corpus (4 398 the
+  same value, maps built in different orders among them) and every
+  ordered pair of the 1 086 accepted inputs of up to 2 bytes (1 179 396
+  pairs). Each pair is compared as written and with the second input at
+  index 1000, and the uniqueness lemmas, the converse or the two-way
+  lemma run on it, so that their contracts are checked on it. The oracle
+  and both files are pinned by their SHA-256; the oracle's own checks
+  (every input of up to 3 bytes encoded back to itself, no two distinct
+  accepted inputs with the same value, a second encoder, deliberately
+  faulty copies of itself caught) run first.
+- **The proofs' sensitivity**: a proof mutation suite was run against
+  these proofs (each postcondition clause of the value relation's and
+  uniqueness lemmas weakened one at a time, the value relation made
+  coarser or stricter, the key order removed from its definition and its
+  lemmas); every mutant either failed its designated proof check or test,
+  or was shown equivalent.\* The suite and its logs are evidence for this
+  release; they are not part of the crate.
+
+  \* Of the 107 mutants, 89 were killed by a proof check, 8 by a test
+  row (each also failing its proof check) and 10 were equivalent, two of
+  them shown so by argument, not by the tool. GNATprove 16 reports every
+  assertion it cannot prove as "provers reached step limit" and does not
+  tell a false assertion from one that is only hard, so the 89 proof
+  kills rest on that report. Each was rerun at ten times the step budget
+  and stayed unproved at the same assertion, with no counterexample, and
+  the unmutated proofs and the mutants that remove a derivable clause
+  prove. That is evidence the checks are sensitive, not a proof that the
+  mutated assertions are unprovable.
+
 ## What is trusted
 
 Nothing beyond the GNAT run-time and the toolchain (GNAT, gprbuild,
 GNATprove and its provers) at the pinned versions below.
 
+One GNATprove warning is silenced: in `Same`, the branch for tags
+(`when 6 => False`) is proved unreachable, since `Det_End` accepts no
+tag, and GNATprove's "unreachable branch" warning on it is turned off
+for that definition only, with the reason in the source. Nothing is
+assumed by it.
+
 ## What is not claimed
 
 - No cursor and no writer exist yet: the decoder checks an input but
   does not read values out of it.
-- No round trip and no canonical uniqueness (that two accepted inputs
-  denoting the same value are the same bytes) are proved yet.
+- No round trip is proved, and no existence: canonical uniqueness says
+  that a value has at most one accepted encoding, not that every value
+  has one, nor that a writer produces it (there is no writer yet).
 - Not "RFC 8949 conformant": the specification covers this profile of
   section 4.2.1 only, and its agreement with the RFC is tested, not
   proved.
@@ -299,6 +384,7 @@ unknown step name or option exits 4 with nothing run.
 bash scripts/test-runner.sh       # the runner fails on a missing, empty or short input, without printing its path (Python 3.10+)
 bash scripts/decoder-tests.sh     # the decoder against both references (Python 3.10+)
 bash scripts/decoder-measure.sh   # throughput and stack, as information
+bash scripts/model-tests.sh       # the value relation Same against the denotation oracle (Python 3.10+)
 ```
 
 `decoder-tests.sh` runs the corpus seeds 1 to 3 by default

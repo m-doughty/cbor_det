@@ -2,6 +2,32 @@
 
 ## 0.1.0 - 2026-10-11
 
+- The value model and canonical uniqueness, `Cbor_Det.Proof.Model` and
+  `Cbor_Det.Proof.Unique`: specification and lemmas only.
+  - Defined: `Same`, the value two accepted items denote: kinds kept
+    apart (so 1 is never `true`, and a byte string never a text string),
+    integers by sign and magnitude, strings by their bytes, arrays by
+    their members in order, maps as unordered sets of key/value pairs
+    with keys of any kind, `false`, `true` and `null` as themselves;
+    head widths and positions play no part.
+  - Proved: canonical uniqueness (P4), `Lemma_CU_Whole`: two inputs, each
+    accepted whole, that denote the same value have the same length and
+    the same bytes, so a value has at most one accepted encoding; its
+    converse, `Lemma_Same_Of_Bytes_Whole` (the same bytes, at any bounds,
+    denote the same value), and both at once,
+    `Lemma_Same_Iff_Bytes_Whole`; `Same` reflexive for every kind
+    (`Lemma_Same_Refl`). No round trip and no existence are claimed.
+  - Proof clients, `Cbor_Det.Proof.Model_Surface`: each conjunct of each
+    postcondition of the two units asserted on its own from the contract
+    alone.
+  - Tested: `Same`, executed with contracts on, against an independent
+    denotation oracle (`tests/reference/ref_denotation.py`) on 22 000
+    seeded pairs and all 1 179 396 ordered pairs of the accepted inputs
+    of up to 2 bytes, each also with one input rebased, with the
+    uniqueness lemmas executed on each pair (`scripts/model-tests.sh`,
+    CI job `model`); the oracle and its pair files are pinned by SHA-256.
+  - One GNATprove warning ("unreachable branch", on the proved-dead
+    branch for tags in `Same`) is silenced there, with its reason.
 - The decoder, `Cbor_Det.Decoder`: `Check (Data, Result, Where)`.
   - Proved: `Result = Ok` exactly when `Accepts (Data)`, that is
     `Accept_Whole (Data)`; `Where` is `Data'Last + 1` on `Ok`,

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Exercise scripts/windows-check.sh with stand-ins for every check it runs
 # (the gates, the proof, the matrix, the differential, the test runner's
-# self-test, the decoder's tests and measurements), alr and Python,
+# self-test, the decoder's tests and measurements, the value relation's
+# tests), alr and Python,
 # so that its exit status is seen to follow its results: 0 only when every
 # step was selected, ran and passed; 1 when any step failed (every
 # selected step still runs and the summary is printed); 2 when nothing
 # failed but a selected step could not run (alr missing, or Python 3.10
-# or later for the differential, the test runner's self-test and the
-# decoder tests), each reported as INCOMPLETE; 3 (PARTIAL) when every
+# or later for the differential, the test runner's self-test, the
+# decoder tests and the value relation's tests), each reported as
+# INCOMPLETE; 3 (PARTIAL) when every
 # selected step passed but --only or --skip left a step out, each reported
 # as NOT SELECTED and not run; 4 for an unknown option or step name, an
 # empty list, or --only with --skip, with nothing run.
@@ -27,7 +29,7 @@ mkdir -p "$tmp/crate/scripts" "$tmp/crate/tests" "$tmp/bin"
 cp scripts/windows-check.sh "$tmp/crate/scripts/"
 for s in check-sources check-leakage check-version test-version test-prove \
          prove test-matrix matrix differential test-runner decoder-tests \
-         decoder-measure; do
+         decoder-measure model-tests; do
   printf '#!/usr/bin/env bash\necho "stand-in %s $*"\ncase " ${MOCK_FAIL:-} " in *" %s "*) exit 1 ;; esac\nexit 0\n' \
     "$s" "$s" > "$tmp/crate/scripts/$s.sh"
 done
@@ -85,7 +87,7 @@ check one-fails 1 "matrix: exit 1" MOCK_FAIL="matrix"
 check one-fails-summary 1 "windows-check: FAILED" MOCK_FAIL="matrix"
 check later-steps-still-run 1 "differential: exit 0" MOCK_FAIL="check-sources"
 check all-fail 1 "windows-check: FAILED" \
-  MOCK_FAIL="check-sources check-leakage check-version test-version test-prove prove test-matrix matrix differential test-runner decoder-tests decoder-measure"
+  MOCK_FAIL="check-sources check-leakage check-version test-version test-prove prove test-matrix matrix differential test-runner decoder-tests decoder-measure model-tests"
 check no-python 2 "differential: INCOMPLETE" PYTHON="$tmp/bin/python-old"
 check no-python-decoder 2 "decoder-tests: INCOMPLETE" PYTHON="$tmp/bin/python-old"
 # The test runner's self-test needs Python too: without it, that step is
@@ -97,6 +99,10 @@ check no-python-test-runner-all 2 "test-runner: INCOMPLETE" \
   --absent "stand-in test-runner" PYTHON="$tmp/bin/python-old"
 check decoder-tests-fail 1 "decoder-tests: exit 1" MOCK_FAIL="decoder-tests"
 check decoder-measure-runs 0 "decoder-measure: exit 0"
+check model-tests-fail 1 "model-tests: exit 1" MOCK_FAIL="model-tests"
+check model-tests-runs 0 "model-tests: exit 0"
+check no-python-model 2 "model-tests: INCOMPLETE" \
+  --absent "stand-in model-tests" PYTHON="$tmp/bin/python-old"
 check test-runner-fail 1 "test-runner: exit 1" MOCK_FAIL="test-runner"
 check no-python-summary 2 "windows-check: INCOMPLETE" PYTHON="$tmp/bin/python-old"
 check no-alr 2 "prove: INCOMPLETE" ALR="$tmp/bin/no-such-alr"
@@ -115,8 +121,8 @@ check summary-no-git 0 "git work tree: no"
 # Step selection. The summary names every step; a step left out by --only
 # or --skip is reported NOT SELECTED and not run, and the result is
 # PARTIAL (3), never PASSED; a failure or an INCOMPLETE step still wins.
-every="environment,sources-self-test,leakage-self-test,test-version,sources,leakage,version,test-prove,prove,test-matrix,matrix,differential,test-runner,decoder-tests,decoder-measure"
-check summary-step-names 0 "steps: environment sources-self-test leakage-self-test test-version sources leakage version test-prove prove test-matrix matrix differential test-runner decoder-tests decoder-measure"
+every="environment,sources-self-test,leakage-self-test,test-version,sources,leakage,version,test-prove,prove,test-matrix,matrix,differential,test-runner,decoder-tests,decoder-measure,model-tests"
+check summary-step-names 0 "steps: environment sources-self-test leakage-self-test test-version sources leakage version test-prove prove test-matrix matrix differential test-runner decoder-tests decoder-measure model-tests"
 check summary-none-unselected 0 "not selected: none"
 check only-one-partial 3 "windows-check: PARTIAL" --absent "stand-in prove" \
   -- --only matrix
@@ -124,7 +130,7 @@ check only-one-runs 3 "stand-in matrix" -- --only matrix
 check only-one-runs-status 3 "matrix: exit 0" -- --only matrix
 check only-others-not-selected 3 "prove: NOT SELECTED (not run)" \
   -- --only matrix
-check only-lists-unselected 3 "not selected: environment sources-self-test leakage-self-test test-version sources leakage version test-prove prove test-matrix differential test-runner decoder-tests decoder-measure" \
+check only-lists-unselected 3 "not selected: environment sources-self-test leakage-self-test test-version sources leakage version test-prove prove test-matrix differential test-runner decoder-tests decoder-measure model-tests" \
   -- --only matrix
 check only-equals-form 3 "windows-check: PARTIAL" -- --only=matrix,prove
 check only-repeated 3 "prove: exit 0" -- --only matrix --only prove
@@ -135,9 +141,9 @@ check skip-failing-step 3 "windows-check: PARTIAL" --absent "stand-in matrix" \
   MOCK_FAIL="matrix" -- --skip matrix
 check skip-reported 3 "matrix: NOT SELECTED (not run)" -- --skip matrix
 check skip-differential-without-python 3 "differential: NOT SELECTED" \
-  PYTHON="$tmp/bin/python-old" -- --skip differential,test-runner,decoder-tests
+  PYTHON="$tmp/bin/python-old" -- --skip differential,test-runner,decoder-tests,model-tests
 check skip-test-runner-without-python 3 "test-runner: NOT SELECTED" \
-  PYTHON="$tmp/bin/python-old" -- --skip differential,test-runner,decoder-tests
+  PYTHON="$tmp/bin/python-old" -- --skip differential,test-runner,decoder-tests,model-tests
 check skip-environment 3 "environment: NOT SELECTED" \
   --absent "stand-in" -- --skip "$every"
 check failure-beats-partial 1 "windows-check: FAILED" MOCK_FAIL="matrix" \

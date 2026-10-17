@@ -30,6 +30,13 @@
 #      scripts/decoder-tests.sh fails its head-table stage in both cells
 #      on a head table cut to one row, and on one with the pinned number
 #      of rows but not the pinned number of accepted inputs.
+#   3. the value relation's tests: the runner's same mode fails on a file
+#      with no pair, outside the contracts cell, on a count of pairs or
+#      of S pairs other than the expected one, on a pair labelled against
+#      Same, and with a broken Same built in a copy of the crate;
+#      scripts/model-tests.sh, from a copy under a directory whose name
+#      holds spaces, fails before comparing anything when the oracle or
+#      either pair file it writes is not the recorded one.
 #
 # When a case detects a leak it says only "leak detected in <case>" and
 # prints nothing of what it captured.
@@ -864,6 +871,136 @@ if [ "$status" -ne 0 ] && grep -q "heads compared" "$tmp/out"; then
 else
   bad "differential.sh with a head table of one comparable head (exit $status)"
 fi
+
+# --- the value relation's tests (scripts/model-tests.sh) ---
+# The runner's same mode: a file with no pair (empty, or header lines
+# only) fails, saying nothing was compared, and so does the plain cell;
+# a count of pairs or of S pairs other than the expected one fails; a
+# label that Same does not give fails, naming both.
+printf '# a header line only\n' > "$tmp/same-header.tsv"
+nothing_compared contracts "$contracts" same empty
+nothing_compared contracts "$contracts" same same-header
+printf '00 00 S\nf4 f5 D\n' > "$tmp/same-agree.tsv"
+status=0
+(cd "$tmp" && "$plain" same "$tmp/same-agree.tsv") > "$tmp/out" 2>&1 || status=$?
+if [ "$status" -ne 0 ] && grep -q "needs the library's contracts" "$tmp/out"; then
+  ok
+else
+  bad "same (O2-lang) on agreeing pairs (exit $status)"
+fi
+status=0
+(cd "$tmp" && "$contracts" same "$tmp/same-agree.tsv" 2 1) > "$tmp/out" 2>&1 \
+  || status=$?
+if [ "$status" -eq 0 ]; then ok; else
+  bad "same with the expected 2 pairs, 1 of them S (exit $status)"
+fi
+for counts in "3 1" "2 2"; do
+  status=0
+  (cd "$tmp" && "$contracts" same "$tmp/same-agree.tsv" $counts) \
+    > "$tmp/out" 2>&1 || status=$?
+  if [ "$status" -ne 0 ] && grep -q "expected" "$tmp/out"; then
+    ok
+  else
+    bad "same with 2 pairs, 1 of them S, where $counts are expected (exit $status)"
+  fi
+done
+printf '00 00 D\n' > "$tmp/same-wrong.tsv"
+status=0
+(cd "$tmp" && "$contracts" same "$tmp/same-wrong.tsv") > "$tmp/out" 2>&1 \
+  || status=$?
+if [ "$status" -ne 0 ] && grep -q "Same is YES" "$tmp/out" \
+   && grep -q "the oracle says D" "$tmp/out"; then
+  ok
+else
+  bad "same on a pair labelled against Same (exit $status)"
+fi
+
+# The script, in a copy of the crate under a directory whose name holds
+# spaces: the oracle changed by one comment line fails before anything
+# runs; each pair file changed by one line (a Python stand-in runs the
+# real one, then adds a pair to the file PAIRS_FORM names) fails before
+# anything is compared.
+model_copy="$tmp/QQ model dir/cbor_det"
+mkdir -p "$model_copy"
+(cd "$crate" && tar cf - --exclude ./.git --exclude ./obj --exclude ./lib \
+   --exclude ./bin --exclude ./tests/obj --exclude ./tests/lib \
+   --exclude ./tests/bin .) | (cd "$model_copy" && tar xf -)
+printf '# one more line\n' >> "$model_copy/tests/reference/ref_denotation.py"
+status=0
+(cd "$model_copy" && bash scripts/model-tests.sh) > "$tmp/out" 2>&1 \
+  || status=$?
+if [ "$status" -ne 0 ] \
+   && grep -q "the oracle (reference/ref_denotation.py) is not the recorded one" "$tmp/out" \
+   && ! grep -q "== same" "$tmp/out"; then
+  ok
+else
+  bad "model-tests.sh with the oracle changed (exit $status)"
+fi
+cat > "$tmp/pairs-python" <<EOF
+#!/bin/sh
+"$python_path" "\$@" || exit \$?
+prev=""
+seen=""
+for a in "\$@"; do
+  if [ "\$prev" = reference/ref_denotation.py ] && [ "\$a" = pairs ]; then
+    seen=yes
+  elif [ "\$seen" = yes ]; then
+    case "\$PAIRS_FORM" in
+      main) printf 'f4 f4 S\n' >> "\$a" ;;
+      small) printf 'f4 f4 S\n' >> "\$a.small" ;;
+    esac
+    seen=""
+  fi
+  prev=\$a
+done
+EOF
+chmod +x "$tmp/pairs-python"
+for form in main small; do
+  run_script "pairs-$form" model-tests "PYTHON=$tmp/pairs-python" \
+    "PAIRS_FORM=$form"
+  if [ "$status" -ne 0 ] \
+     && grep -q "the $form pair file is not the recorded one" "$tmp/out" \
+     && ! grep -q "== same" "$tmp/out"; then
+    ok
+  else
+    bad "model-tests.sh with the $form pair file changed (exit $status)"
+  fi
+done
+
+# A broken Same (false, true and null all the same value), in a copy of
+# the crate: the runner, built there in the contracts cell, fails on a
+# pair the oracle labels D, naming the disagreement.
+broken_same="$tmp/QQ model dir/broken-same/cbor_det"
+mkdir -p "$broken_same"
+(cd "$crate" && tar cf - --exclude ./.git --exclude ./obj --exclude ./lib \
+   --exclude ./bin --exclude ./tests/obj --exclude ./tests/lib \
+   --exclude ./tests/bin .) | (cd "$broken_same" && tar xf -)
+sed 's/when 7 => Info_Of (B1 (P1)) = Info_Of (B2 (P2))));/when 7 => True));/' \
+  "$crate/src/cbor_det-proof-model.ads" > "$broken_same/src/cbor_det-proof-model.ads"
+if cmp -s "$crate/src/cbor_det-proof-model.ads" \
+     "$broken_same/src/cbor_det-proof-model.ads"; then
+  bad "the broken Same could not be made (the definition's line changed)"
+else
+  status=0
+  (cd "$broken_same/tests" \
+     && "$ALR" -n build -- -XCBOR_DET_OPT=O0 -XCBOR_DET_CHECKS=contracts) \
+    > "$tmp/out" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    bad "the broken Same does not build (exit $status)"
+  else
+    printf 'f4 f5 D\n' > "$tmp/same-false-true.tsv"
+    status=0
+    (cd "$tmp" && "$broken_same/tests/bin/O0-contracts/test_main" same \
+       "$tmp/same-false-true.tsv") > "$tmp/out" 2>&1 || status=$?
+    if [ "$status" -ne 0 ] && grep -q "Same is YES" "$tmp/out" \
+       && grep -q "the oracle says D" "$tmp/out"; then
+      ok
+    else
+      bad "same with a broken Same on false and true (exit $status)"
+    fi
+  fi
+fi
+# --- the value relation's tests: end ---
 
 echo "test-runner: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

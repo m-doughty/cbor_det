@@ -86,6 +86,54 @@ way and passes the same self-test as the original.
 `scripts/decoder-tests.sh` refuses to run unless both files are the ones
 kept here.
 
+## The denotation oracle
+
+`ref_denotation.py` is a third independent program: it says what value
+an accepted input denotes, in the sense of the crate's value relation
+`Same` (`Cbor_Det.Proof.Model`). It was written blind, from the profile
+and the definition of the value only, without access to this crate's
+code or to the other references, and shares no code with them. Standard
+library only (Python 3.10 or later).
+
+Its values are tagged, so that kinds stay apart: an integer is its sign
+and magnitude (a major type 1 argument n is the magnitude n + 1), a byte
+string and a text string are their bytes under different tags (text is
+not checked to be UTF-8), an array is its members in order, a map is the
+set of its key/value pairs in no order, with keys of any kind, a
+container included, and `false`, `true` and `null` are tags of their
+own. Two inputs denote the same value when their tagged values are
+equal. It rejects what the crate's profile rejects, at most 16
+containers nested in one another.
+
+It is kept as received: no change.
+
+    sha256: 9067be6cf0bfc67b126942409b184609dcfb7f03ccc3aaa1825026dd61f9d4ff
+
+- `selftest`: its own checks, among them ten deliberately faulty
+  copies of its decoder, each of which its batteries catch.
+- `check`: every input of 0 to 3 bytes (16 843 009, walked by prefix):
+  269 799 accepted (0, 55, 1 031 and 268 713 by length), each encoded
+  back to its own bytes, and no two distinct accepted inputs with the
+  same value; then 100 985 values generated from a seeded corpus,
+  checked against a second encoder of its own.
+- `pairs FILE`: writes two pair files, FILE and FILE.small, one line
+  per pair, `HEXA HEXB S` when the two denote the same value and
+  `HEXA HEXB D` when they do not, after a header of lines that start
+  with `#`. FILE holds 22 000 pairs from the seeded corpus (4 398 S,
+  17 602 D), among them maps built in different orders; FILE.small
+  holds every ordered pair of the 1 086 accepted inputs of up to 2 bytes
+  (1 179 396 pairs: 1 086 S, 1 178 310 D). The seeds are fixed in the
+  program (corpus 1362215088, pairs 1362229966), so the files are the
+  same on every run:
+
+      pairs.txt        c46e87b889e0e3805ce21ff1df118ed4b94be5543cdbd785432460450635fb43
+      pairs.txt.small  bcc969eab765fec25ea35583a647207022cc9f87803b18a95c1c5f2cc982a2b6
+
+`scripts/model-tests.sh` refuses to run unless the program and both
+files it writes are the recorded ones; it writes them to
+`tests/obj/model`, which is not part of the repository, and compares
+`Same` with every label.
+
 ## The files beside it
 
 - `cost_model.py` predicts how long the library's ghost predicate takes
@@ -99,6 +147,7 @@ kept here.
   around half the bytes left); what each should give is the status
   oracle's to say.
 
-Run them with `scripts/differential.sh` (the ghost predicate) and
-`scripts/decoder-tests.sh` (the decoder). Generated files go to
+Run them with `scripts/differential.sh` (the ghost predicate),
+`scripts/decoder-tests.sh` (the decoder) and `scripts/model-tests.sh`
+(the value relation). Generated files go to
 `tests/obj/differential`, which is not part of the repository.

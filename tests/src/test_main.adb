@@ -12,6 +12,8 @@
 --  test_main verdict-exhaustive FILE   ... on every input of up to 3 bytes
 --  test_main status FILE [ROWS]    the decoder's Status and Where against
 --                                  the status oracle
+--  test_main same FILE [ROWS [S_ROWS]]   Same against the denotation
+--                                  oracle's pairs (contracts cell only)
 --
 --  The checks that call the library's ghost code run only when the
 --  library is compiled with its contracts (the contracts cell). The
@@ -30,6 +32,7 @@ with Decoder_Vectors;
 with Differential;
 with Ghost_Vectors;
 with Head_Vectors;
+with Model_Pairs;
 with Support;
 
 procedure Test_Main is
@@ -74,10 +77,19 @@ procedure Test_Main is
             (if Argument_Count = 3 then Integer'Value (Argument (3))
              else -1));
          Ghost_Ran := True;
+      elsif Argument (1) = "same" and then Argument_Count in 2 .. 4 then
+         Model_Pairs.Same_Pairs
+           (Argument (2),
+            (if Argument_Count >= 3 then Integer'Value (Argument (3))
+             else -1),
+            (if Argument_Count = 4 then Integer'Value (Argument (4))
+             else -1));
+         Ghost_Ran := Model_Pairs.Ran;
       else
          Put_Line ("usage: test_main [corpus FILE [TIMES] | heads FILE"
                    & " | exhaustive FILE | verdict FILE [ROWS]"
-                   & " | verdict-exhaustive FILE | status FILE [ROWS]]");
+                   & " | verdict-exhaustive FILE | status FILE [ROWS]"
+                   & " | same FILE [ROWS [S_ROWS]]]");
          Set_Failed;
          return;
       end if;
