@@ -39,9 +39,9 @@ jobs:
   prove:
     name: prove (${{ matrix.name }}, ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.os }}
-    # A placeholder: no sharded prove job has been timed yet, so the limit
-    # is to be set from the first runs of these jobs. A run that hits the
-    # limit is an error to rerun, never a failed proof.
+    # A placeholder: the shards split by measured time have not been
+    # timed yet, so the limit is to be set from their first runs. A run
+    # that hits the limit is an error to rerun, never a failed proof.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -73,9 +73,11 @@ jobs:
         run: alr -n build
       # Every command starts from cold (the script deletes the proof
       # sessions first), so splitting the commands across jobs changes
-      # nothing any command proves. This job runs its shard: the commands
-      # whose number in the script's order leaves shard-1 when divided by
-      # shards; it prints how many of the total it ran. Provers are
+      # nothing any command proves. This job runs its shard: the script
+      # splits the commands by their measured seconds in
+      # scripts/prove-costs.txt, which only balances the shards and never
+      # changes which commands run; it prints how many of the total it
+      # ran, and each command's time. Provers are
       # bounded by steps, not time (see cbor_det.gpr), so a proof does not
       # fail for being slow. The step counts printed are those of the
       # prover that finished first and differ from run to run and platform

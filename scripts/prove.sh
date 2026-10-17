@@ -10,11 +10,14 @@
 # time limit (--timeout=0), three provers, every check an error. The
 # number of parallel proof jobs is explicit (--jobs, default 2).
 #
-# For each command it prints the checks proved, the checks not proved and
-# the largest number of steps any check took: the largest over every
-# prover on every line of the output (--report=statistics lists each
-# prover that worked on a check, the largest not necessarily last) and
-# the summary's own "max steps used for successful proof".
+# For each command it prints the checks proved, the checks not proved,
+# the largest number of steps any check took (the largest over every
+# prover on every line of the output: --report=statistics lists each
+# prover that worked on a check, the largest not necessarily last; and
+# the summary's own "max steps used for successful proof"), gnatprove's
+# exit status and the command's wall-clock time in whole seconds:
+#   NAME: proved P, not proved U, max steps S, exit E, T s
+# scripts/prove-costs.sh turns such lines into scripts/prove-costs.txt.
 # It fails if any check is not proved; if gnatprove fails or is killed by
 # a signal; if the command wrote no summary (gnatprove.out), or one
 # without a well-formed Total line; if the summary does not show the unit
@@ -33,17 +36,32 @@
 # their first runs. Until then it is UNMEASURED and the default is no
 # guard (0); a local run may pass one, as a local safeguard only.
 #
-# Shards. The commands are numbered 0 to T-1 in the order above (units,
-# then the subprograms of the specs, then those declared only in a body;
-# the files in C collation order, so the same on every platform), and
-# --shard K/N (1 <= K <= N <= 999) runs those whose number leaves K-1
-# when divided by N. Before any proof, a sharded run checks that the N
-# shards of that rule, together, list every command exactly once, and
-# that its own shard lists at least one; it prints "shard K/N: M of T
-# commands", or fails (exit status 2) without proving anything. Each
-# command is the same as in a run without --shard, and is judged the
-# same way. A run, sharded or not, that started fewer or more commands
-# than it listed fails ("prove: INTERNAL", exit status 2).
+# Shards. --shard K/N (1 <= K <= N <= 999) runs shard K of N, split by
+# measured time. The commands are numbered 0 to T-1 in the order above
+# (units, then the subprograms of the specs, then those declared only in
+# a body; the files in C collation order, so the same on every
+# platform). Each has a cost: its whole seconds in
+# scripts/prove-costs.txt (lines "NAME SECONDS", the name first on the
+# line; blank lines and lines whose first non-blank character is # are
+# skipped), or, for a command not in the table, the lower median of the
+# table's costs of commands (1 if there are none); a cost of 0 counts as
+# 1. Taken by cost, largest first (equal costs by
+# number), each command goes to the shard with the least cost so far
+# (the lowest-numbered of equal ones). With no table, or equal costs,
+# that is round robin: shard K gets the commands whose number leaves
+# K-1 when divided by N. A shard runs its commands in the order above.
+# The table only balances the shards: names in it that are not commands
+# are ignored, and it never changes which commands run or how. A missing
+# table is allowed (every cost the default); a malformed line (not a
+# name and a whole number of at most 9 digits) or a name listed twice
+# fails (exit status 2) before anything runs. The table is read only
+# with --shard. Before any proof, a sharded run checks that the N shards
+# of that rule, together, list every command exactly once, and that its
+# own shard lists at least one; it prints "shard K/N: M of T commands",
+# or fails (exit status 2) without proving anything. Each command is the
+# same as in a run without --shard, and is judged the same way. A run,
+# sharded or not, that started fewer or more commands than it listed
+# fails ("prove: INTERNAL", exit status 2).
 # --list prints the names of the commands, one per line, in that order
 # (with --shard, those of the shard, after the same check), and runs
 # nothing: no alr is needed.
@@ -112,6 +130,8 @@ crate=$(pwd -P)
 # The commands, one record per line: NAME KIND TARGET ARGS..., in the
 # order they run without --shard (the files in C collation order, so the
 # order is the same on every platform). No name or argument holds a space.
+# The declarations are read in the C locale: in some others (Turkish, for
+# one) [A-Za-z] does not match every ASCII letter.
 specs=$(cd "$crate/src" && LC_ALL=C ls *.ads)
 records=""
 add () {
@@ -131,9 +151,9 @@ if [ "$units_only" = no ]; then
     # level (three spaces in), as --limit-subp needs.
     while read -r line name; do
       add "subp-$unit-$name" subp "$spec:$line" --limit-subp="$spec:$line"
-    done < <(grep -n -E '^   (procedure|function) [A-Za-z_0-9]+' "$crate/src/$spec" \
-             | sed -E 's/^([0-9]+):   (procedure|function) ([A-Za-z_0-9]+).*/\1 \3/' \
-             | awk '!seen[$2]++')
+    done < <(LC_ALL=C grep -n -E '^   (procedure|function) [A-Za-z_0-9]+' "$crate/src/$spec" \
+             | LC_ALL=C sed -E 's/^([0-9]+):   (procedure|function) ([A-Za-z_0-9]+).*/\1 \3/' \
+             | LC_ALL=C awk '!seen[$2]++')
   done
   # Subprograms declared at the top level of a body and not in its spec,
   # at their first declaration in the body.
@@ -142,28 +162,87 @@ if [ "$units_only" = no ]; then
     body="$unit.adb"
     [ -f "$crate/src/$body" ] || continue
     while read -r line name; do
-      if ! grep -q -E "^   (procedure|function) $name([^A-Za-z_0-9]|\$)" "$crate/src/$spec"; then
+      if ! LC_ALL=C grep -q -E "^   (procedure|function) $name([^A-Za-z_0-9]|\$)" "$crate/src/$spec"; then
         add "subp-$unit-$name" subp "$body:$line" --limit-subp="$body:$line"
       fi
-    done < <(grep -n -E '^   (procedure|function) [A-Za-z_0-9]+' "$crate/src/$body" \
-             | sed -E 's/^([0-9]+):   (procedure|function) ([A-Za-z_0-9]+).*/\1 \3/' \
-             | awk '!seen[$2]++')
+    done < <(LC_ALL=C grep -n -E '^   (procedure|function) [A-Za-z_0-9]+' "$crate/src/$body" \
+             | LC_ALL=C sed -E 's/^([0-9]+):   (procedure|function) ([A-Za-z_0-9]+).*/\1 \3/' \
+             | LC_ALL=C awk '!seen[$2]++')
   done
 fi
 commands=$(printf '%s' "$records" | awk 'END { print NR }')
 
-# select_shard K N: the records of shard K of N, in order: those whose
-# number (0 to T-1) leaves K-1 when divided by N.
+# select_shard K: the records of shard K, in order (from $labelled).
 select_shard () {
-  printf '%s' "$records" | awk -v k="$1" -v n="$2" '(NR - 1) % n == k - 1'
+  printf '%s' "$labelled" | awk -v k="$1" '$1 == k + 0 { sub(/^[0-9]+ /, ""); print }'
 }
 
 if [ "$shard_n" -gt 0 ]; then
+  # The shard of each command, by the rule above: one awk reads the cost
+  # table and the records and prints "SHARD RECORD" for each record, in
+  # order, or "error TEXT" alone. Integer arithmetic only.
+  costs="$crate/scripts/prove-costs.txt"
+  if [ -e "$costs" ] && { [ ! -f "$costs" ] || [ ! -r "$costs" ]; }; then
+    say "prove: scripts/prove-costs.txt cannot be read"
+    exit 2
+  fi
+  if [ ! -e "$costs" ]; then costs=""; fi
+  labelled=$(printf '%s' "$records" | awk -v n="$shard_n" -v table="$costs" '
+    BEGIN {
+      bad = ""; nt = 0
+      if (table != "") {
+        line_no = 0
+        while ((r = (getline line < table)) > 0) {
+          line_no++
+          if (line ~ /^[ \t]*$/ || line ~ /^[ \t]*#/) { continue }
+          if (line !~ /^[^ \t#][^ \t]*[ \t]+[0-9]+[ \t]*$/) {
+            bad = "line " line_no " is not NAME SECONDS"; break
+          }
+          split(line, f, /[ \t]+/)
+          if (length(f[2]) > 9) { bad = "line " line_no ": more than 9 digits"; break }
+          if (f[1] in cost) { bad = "line " line_no ": " f[1] " is listed twice"; break }
+          cost[f[1]] = f[2] + 0; nt++
+        }
+        if (bad == "" && r < 0) { bad = "cannot be read" }
+      }
+    }
+    { rec[NR] = $0; nm[NR] = $1; iscmd[$1] = 1 }
+    END {
+      if (bad != "") { print "error scripts/prove-costs.txt: " bad; exit }
+      # The lower median of the costs of the commands in the table.
+      m = 0
+      for (name in cost) {
+        if (name in iscmd) {
+          c = cost[name] + 0; j = m
+          while (j > 0 && v[j] > c) { v[j + 1] = v[j]; j-- }
+          v[j + 1] = c; m++
+        }
+      }
+      median = (m > 0) ? v[int((m + 1) / 2)] : 1
+      # Each command by cost, largest first, then by number.
+      for (i = 1; i <= NR; i++) {
+        c = (nm[i] in cost) ? cost[nm[i]] : median
+        w[i] = (c < 1) ? 1 : c
+        j = i - 1
+        while (j > 0 && w[o[j]] < w[i]) { o[j + 1] = o[j]; j-- }
+        o[j + 1] = i
+      }
+      for (s = 1; s <= n; s++) { load[s] = 0 }
+      for (j = 1; j <= NR; j++) {
+        i = o[j]; best = 1
+        for (s = 2; s <= n; s++) { if (load[s] < load[best]) { best = s } }
+        lab[i] = best; load[best] += w[i]
+      }
+      for (i = 1; i <= NR; i++) { print lab[i] " " rec[i] }
+    }')
+  case "$labelled" in
+    "error "*) say "prove: ${labelled#error }"; exit 2 ;;
+  esac
   # The coverage check, for this N: the shards 1 to N, together, hold
   # every command exactly once, and this shard at least one.
   all=$(printf '%s' "$records" | LC_ALL=C sort)
   twice=$(printf '%s\n' "$all" | uniq -d)
-  union=$(k=1; while [ "$k" -le "$shard_n" ]; do select_shard "$k" "$shard_n"; k=$((k + 1)); done \
+  union=$(k=1; while [ "$k" -le "$shard_n" ]; do select_shard "$k"; k=$((k + 1)); done \
           | LC_ALL=C sort)
   if [ -n "$twice" ]; then
     say "prove: SHARD CHECK FAILED: a command is listed twice"
@@ -177,7 +256,7 @@ if [ "$shard_n" -gt 0 ]; then
     fi
     exit 2
   fi
-  records=$(select_shard "$shard_k" "$shard_n")
+  records=$(select_shard "$shard_k")
   if [ -n "$records" ]; then
     records="$records
 "
@@ -222,7 +301,7 @@ started=0
 # tests/obj/prove/NAME.txt.
 run () {
   local name=$1 kind=$2 target=$3 out status steps proved unproved summary
-  local verdict total
+  local verdict total t0 elapsed
   shift 3
   started=$((started + 1))
   out="$logs/$name.txt"
@@ -230,6 +309,7 @@ run () {
     if [ -d "$d" ]; then rm -rf "$d"; fi
   done
   status=0
+  t0=$SECONDS
   # The command in its own process group; a guard kills the whole group.
   # A command killed by a signal is reported as such, never as its exit
   # status (which would be 0).
@@ -252,6 +332,7 @@ run () {
     exit($st >> 8);
   ' "$guard" "$ALR" -n exec -- gnatprove -P "$crate/cbor_det.gpr" \
       -j"$jobs" --report=statistics "$@" > "$out" 2>&1 || status=$?
+  elapsed=$((SECONDS - t0))
   if [ "$status" -eq 124 ]; then
     echo "$name: GUARD TRIPPED after $guard s (an error to rerun, not a proof result)"
     tripped=1
@@ -264,7 +345,7 @@ run () {
       END { print $m // 0 }' "$out" ${summary:+"$summary"})
   proved=$(grep -c '^ *info: .* proved' "$out" || true)
   unproved=$(grep -cE '^ *(medium|high|low): ' "$out" || true)
-  echo "$name: proved $proved, not proved $unproved, max steps $steps, exit $status"
+  echo "$name: proved $proved, not proved $unproved, max steps $steps, exit $status, $elapsed s"
   if [ "$status" -ne 0 ] || [ "$unproved" -ne 0 ]; then
     failed=1
   fi

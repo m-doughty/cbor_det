@@ -50,7 +50,13 @@
   command exactly once; a run that starts fewer commands than it listed
   fails; `--list` prints the commands. The files are taken in C collation
   order on every platform. CI runs the proof in three shards per
-  platform.
+  platform. The shards are split by measured time: each command's
+  seconds from `scripts/prove-costs.txt`, a table used only to balance
+  the shards (coverage never depends on it), made from run logs by
+  `scripts/prove-costs.sh`. Each result line ends with the command's
+  time in whole seconds.
+- The proof step limit is 20 000 (was 10 000), per prover and per
+  check.
 - The crate layout, the build matrix, the proof configuration (bounded by
   prover steps, not time) and the CI gates. `Cbor_Det` declares the
   shared types.

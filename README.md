@@ -229,10 +229,11 @@ they ran, and fails if they did not run where they could.
   them shown so by argument, not by the tool. GNATprove 16 reports every
   assertion it cannot prove as "provers reached step limit" and does not
   tell a false assertion from one that is only hard, so the 89 proof
-  kills rest on that report. Each was rerun at ten times the step budget
-  and stayed unproved at the same assertion, with no counterexample, and
-  the unmutated proofs and the mutants that remove a derivable clause
-  prove. That is evidence the checks are sensitive, not a proof that the
+  kills rest on that report. The suite ran with a limit of 10 000
+  steps; each of the 89 kills was rerun with a limit of 100 000 and
+  stayed unproved at the same assertion, with no counterexample (so it
+  is also unproved at this release's limit of 20 000), and the unmutated
+  proofs and the mutants that remove a derivable clause prove. That is evidence the checks are sensitive, not a proof that the
   mutated assertions are unprovable.
 
 ## What is trusted
@@ -350,19 +351,43 @@ that runs longer; a tripped guard is an error to rerun, never a failed
 proof. The guard is a safeguard, not a result: its value for CI is not
 measured yet, so none is set.
 
+Each result line ends with the command's wall-clock time in whole
+seconds (`NAME: proved P, not proved U, max steps S, exit E, T s`).
+
 `--shard K/N` (1 <= K <= N <= 999) runs one of N shards of those
-commands: numbered in the order above (the files of `src/` in C
-collation order, so the same on every platform), shard K runs those
-whose number leaves K-1 when divided by N, each exactly as in a whole
-run. Before any proof a sharded run checks that the N shards together
-hold every command exactly once and that its own holds at least one,
-and prints `shard K/N: M of T commands`; if not, it exits 2 having
-proved nothing. A run, sharded or not, that started fewer commands than
+commands, split by measured time. Each command costs its seconds in
+`scripts/prove-costs.txt` (a command not listed costs the median of the
+listed ones); taken largest first, each goes to the shard with the
+least cost so far, and a shard runs its commands in the order above
+(the files of `src/` in C collation order, so the same on every
+platform), each exactly as in a whole run. The table is used only to
+balance the shards: a missing, stale or wrong entry can make one shard
+slower than the others, but never changes which commands run or what
+they prove; names in it that are not commands are ignored, and with no
+table the split is round robin. A malformed table fails the sharded run
+(exit 2) before anything runs. Before any proof a sharded run checks
+that the N shards together hold every command exactly once and that its
+own holds at least one, and prints `shard K/N: M of T commands`; if
+not, it exits 2 having proved nothing. A run, sharded or not, that started fewer commands than
 it listed exits 2 and never reports all proved. `--list` prints the
 names of the commands (of the shard, with `--shard`) and runs nothing.
 CI runs the proof in three shards on each platform; the proof is all
 proved only if all three pass. The script cannot see which shards CI
 runs: the workflow's matrix must list each of the three once.
+
+To measure the costs again, run the shards (or the whole proof) on a
+few machines, keep their output, and make a new table from it:
+
+```sh
+bash scripts/prove.sh --jobs 2 --shard 1/3 > shard-1.log
+# ... the other shards, on each machine ...
+bash scripts/prove-costs.sh *.log > scripts/prove-costs.txt
+```
+
+`scripts/prove-costs.sh` takes the mean time of each command over every
+result line in the files (CI logs too, whatever precedes the name),
+rounded to whole seconds and at least 1. A stale table only worsens the
+balance.
 
 The whole project in one command:
 
