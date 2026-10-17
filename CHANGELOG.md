@@ -45,6 +45,12 @@
 - `scripts/prove.sh` reports the largest step count of every prover on
   every line and of the summary, and runs the subprograms declared only
   in a body too.
+- `scripts/prove.sh --shard K/N` (N at most 999) runs one of N shards
+  of the proof commands, after checking that the N shards cover every
+  command exactly once; a run that starts fewer commands than it listed
+  fails; `--list` prints the commands. The files are taken in C collation
+  order on every platform. CI runs the proof in three shards per
+  platform.
 - The crate layout, the build matrix, the proof configuration (bounded by
   prover steps, not time) and the CI gates. `Cbor_Det` declares the
   shared types.

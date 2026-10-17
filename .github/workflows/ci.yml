@@ -37,15 +37,25 @@ jobs:
         run: bash scripts/matrix.sh
 
   prove:
-    name: prove (${{ matrix.name }})
+    name: prove (${{ matrix.name }}, ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.os }}
-    # Set from two CI runs: the longest prove job took 26 minutes
-    # (Windows). A run that hits the limit is an error to rerun, never a
-    # failed proof.
+    # A placeholder: no sharded prove job has been timed yet, so the limit
+    # is to be set from the first runs of these jobs. A run that hits the
+    # limit is an error to rerun, never a failed proof.
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # The proof is split into `shards` jobs per platform. `shard` must
+      # list every number from 1 to `shards`, once each; otherwise some
+      # commands run in no job. Nothing else detects a mismatch: a
+      # missing or repeated shard leaves every job passing.
+      # scripts/prove.sh checks, in each job, only that the `shards`
+      # shards of its rule would cover every command exactly once (and
+      # refuses a shard above `shards`), not which shards the matrix runs.
       matrix:
+        name: [linux-x86_64, linux-aarch64, macos-arm64, windows-x86_64]
+        shard: [1, 2, 3]
+        shards: [3]
         include:
           - { name: linux-x86_64,   os: ubuntu-24.04 }
           - { name: linux-aarch64,  os: ubuntu-24.04-arm }
@@ -62,19 +72,25 @@ jobs:
         working-directory: tests
         run: alr -n build
       # Every command starts from cold (the script deletes the proof
-      # sessions first). Provers are bounded by steps, not time (see
-      # cbor_det.gpr), so a proof does not fail for being slow. The
-      # step counts printed are those of the prover that finished first and
-      # differ from run to run and platform to platform; only "all proved"
-      # is the result. Two proof jobs at a time. The per-command
-      # wall-clock guard is UNMEASURED, so none is passed; it is set from
-      # these runs' times.
-      - name: The proof driver fails on unproved, justified or assumed checks, and on a tripped guard
+      # sessions first), so splitting the commands across jobs changes
+      # nothing any command proves. This job runs its shard: the commands
+      # whose number in the script's order leaves shard-1 when divided by
+      # shards; it prints how many of the total it ran. Provers are
+      # bounded by steps, not time (see cbor_det.gpr), so a proof does not
+      # fail for being slow. The step counts printed are those of the
+      # prover that finished first and differ from run to run and platform
+      # to platform; only "all proved" is the result. Two proof jobs at a
+      # time. The per-command wall-clock guard is UNMEASURED, so none is
+      # passed; it is set from these runs' times.
+      # The driver's own test does not depend on the shard: it runs in
+      # shard 1 of each platform only.
+      - name: The proof driver fails on unproved, justified or assumed checks, on a tripped guard and on a broken shard rule (shard 1 only)
+        if: matrix.shard == 1
         shell: bash
         run: bash scripts/test-prove.sh
-      - name: GNATprove per unit and per subprogram, with steps (all proved, or the job fails)
+      - name: GNATprove per unit and per subprogram, this shard, with steps (all proved, or the job fails)
         shell: bash
-        run: bash scripts/prove.sh --jobs 2
+        run: bash scripts/prove.sh --jobs 2 --shard ${{ matrix.shard }}/${{ matrix.shards }}
 
   differential:
     name: differential (${{ matrix.name }})

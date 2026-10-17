@@ -350,6 +350,20 @@ that runs longer; a tripped guard is an error to rerun, never a failed
 proof. The guard is a safeguard, not a result: its value for CI is not
 measured yet, so none is set.
 
+`--shard K/N` (1 <= K <= N <= 999) runs one of N shards of those
+commands: numbered in the order above (the files of `src/` in C
+collation order, so the same on every platform), shard K runs those
+whose number leaves K-1 when divided by N, each exactly as in a whole
+run. Before any proof a sharded run checks that the N shards together
+hold every command exactly once and that its own holds at least one,
+and prints `shard K/N: M of T commands`; if not, it exits 2 having
+proved nothing. A run, sharded or not, that started fewer commands than
+it listed exits 2 and never reports all proved. `--list` prints the
+names of the commands (of the shard, with `--shard`) and runs nothing.
+CI runs the proof in three shards on each platform; the proof is all
+proved only if all three pass. The script cannot see which shards CI
+runs: the workflow's matrix must list each of the three once.
+
 The whole project in one command:
 
 ```sh
