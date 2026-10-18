@@ -3,8 +3,8 @@
 #
 # Reads the files given, each holding the output of scripts/prove.sh
 # (one whole run or any of its shards; a CI log whose lines carry a
-# prefix ending in white space will do, and a trailing carriage return
-# is ignored), takes every result line
+# prefix ending in white space will do, and carriage returns at the end
+# of a line are ignored), takes every result line
 #   NAME: proved P, not proved U, max steps S, exit E, T s
 # and prints the table: for each NAME, the mean of its T over every such
 # line in every file, rounded to the nearest whole second (halves up),
@@ -37,7 +37,7 @@ done
 
 table=$(awk '
   {
-    sub(/\r$/, "")
+    sub(/\r+$/, "")
     if ($0 !~ /(^|[ \t])[^ \t:]+: proved [0-9]+, not proved [0-9]+, max steps [0-9]+, exit [0-9]+, [0-9]+ s$/) { next }
     line = $0
     sub(/: proved [0-9]+, not proved [0-9]+, max steps [0-9]+, exit [0-9]+, [0-9]+ s$/, "", line)

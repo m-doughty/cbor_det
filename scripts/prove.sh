@@ -43,13 +43,15 @@
 # platform). Each has a cost: its whole seconds in
 # scripts/prove-costs.txt (lines "NAME SECONDS", the name first on the
 # line; blank lines and lines whose first non-blank character is # are
-# skipped), or, for a command not in the table, the lower median of the
-# table's costs of commands (1 if there are none); a cost of 0 counts as
-# 1. Taken by cost, largest first (equal costs by
-# number), each command goes to the shard with the least cost so far
-# (the lowest-numbered of equal ones). With no table, or equal costs,
-# that is round robin: shard K gets the commands whose number leaves
-# K-1 when divided by N. A shard runs its commands in the order above.
+# skipped; a line may end in one or more CR before its LF), or, for a
+# command not in the table, the lower median of the table's costs of
+# commands (1 if there are none); a cost of 0 counts as 1. Taken by
+# cost, largest first
+# (equal costs by number), each command goes to the shard with the
+# least cost so far (the lowest-numbered of equal ones). With no table,
+# or equal costs, that is round robin: shard K gets the commands whose
+# number leaves K-1 when divided by N. A shard runs its commands in the
+# order above.
 # The table only balances the shards: names in it that are not commands
 # are ignored, and it never changes which commands run or how. A missing
 # table is allowed (every cost the default); a malformed line (not a
@@ -194,6 +196,10 @@ if [ "$shard_n" -gt 0 ]; then
         line_no = 0
         while ((r = (getline line < table)) > 0) {
           line_no++
+          # A line ending in one or more CR before its LF reads as the
+          # same line ending in LF with every awk (some strip a CR before
+          # LF themselves, some do not). A CR inside a line stays.
+          sub(/\r+$/, "", line)
           if (line ~ /^[ \t]*$/ || line ~ /^[ \t]*#/) { continue }
           if (line !~ /^[^ \t#][^ \t]*[ \t]+[0-9]+[ \t]*$/) {
             bad = "line " line_no " is not NAME SECONDS"; break

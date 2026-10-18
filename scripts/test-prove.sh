@@ -31,9 +31,9 @@
 #   command not in the table at the median; names that are not commands
 #   ignored; the runs of the shards execute the commands --list gives
 #   them, and together exactly those of a run without --shard; an empty,
-#   flat, zero or stale table gives round robin; a malformed table, a
-#   name listed twice or an unreadable table fails before anything runs
-#   (with --shard only). scripts/prove-costs.sh: its means, rounding,
+#   flat, zero or stale table gives round robin; a table in CR LF or
+#   CR CR LF reads as in LF; a malformed table, a name listed twice or an unreadable
+#   table fails before anything runs (with --shard only). scripts/prove-costs.sh: its means, rounding,
 #   minimum, order and header, a table prove.sh reads, logs named like
 #   awk assignments (x=y), and its refusals, each with its reason.
 # Runs under /bin/bash by default (Bash 3.2 on macOS).
@@ -590,7 +590,7 @@ done
 # list. Without --shard the table is not read.
 i=0
 for t in 'unit-a' 'unit-a -3' 'unit-a 1.5' 'unit-a 5 x' 'unit-a x' 'unit-a 1234567890' \
-         ' unit-a 5' 'unit-a 5\r' '#c\nunit-a 5\nunit-a 6' '5' 'unit-a +5'; do
+         ' unit-a 5' '5' 'unit-a +5' 'unit-a 5\r7'; do
   i=$((i + 1))
   printf "$t\\n" | flat "bad-table-$i"
   o="$tmp/v/bad-table-$i"
@@ -608,11 +608,80 @@ bad_table_list_ok () {
     && [ "$(cat "$o/stderr")" = "prove: scripts/prove-costs.txt: line 1 is not NAME SECONDS" ]
 }
 verdict bad-table-list bad_table_list_ok
+printf '#c\nunit-a 5\nunit-a 6\n' | flat bad-table-twice
 o="$tmp/v/bad-table-twice"
+prove "$tmp/bad-table-twice" "$o" pass --shard 1/3
 bad_twice_ok () {
-  grep -qx "prove: scripts/prove-costs.txt: line 3: unit-a is listed twice" "$tmp/v/bad-table-9/stdout"
+  [ "$st" -eq 2 ] && [ ! -s "$o/calls" ] \
+    && grep -qx "prove: scripts/prove-costs.txt: line 3: unit-a is listed twice" "$o/stdout"
 }
 verdict bad-table-twice bad_twice_ok
+
+# A table whose lines end in CR LF, or in CR CR LF, reads as the same
+# table in LF: the weighted table above (not round robin), every line so
+# ended, blank and comment lines too, gives the same shards. A malformed
+# line in such a table is still refused, at its own line number.
+# (Written by the shell's printf: an awk might write its "\r\n" in
+# text mode, doubling the CR.)
+# ends CRS: standard input with CRS (\r or \r\r) before each LF.
+ends () { local e=$1 l; while IFS= read -r l; do printf '%s' "$l"; printf "$e"'\n'; done; }
+crlf () { ends '\r'; }
+crlf < "$tmp/wt/scripts/prove-costs.txt" | flat table-crlf
+crlf_ok () {
+  local k
+  [ "$(tr -d -c '\r' < "$tmp/table-crlf/scripts/prove-costs.txt" | wc -c | tr -d ' ')" \
+    -eq "$(wc -l < "$tmp/table-crlf/scripts/prove-costs.txt" | tr -d ' ')" ] || return 1
+  for k in 1 2 3; do
+    o="$tmp/v/table-crlf-$k"
+    PROVE_ALR="$tmp/no-such-alr" prove "$tmp/table-crlf" "$o" pass --list --shard "$k/3"
+    [ "$st" -eq 0 ] && same "$o/stdout" "$tmp/want-w3-$k" \
+      && same "$o/stdout" "$tmp/v/weighted-3-$k/stdout" || return 1
+  done
+}
+verdict table-crlf crlf_ok
+printf '# c\nunit-a 5\nunit-b x\nunit-c 4\n' | crlf | flat table-crlf-bad
+o="$tmp/v/table-crlf-bad"
+prove "$tmp/table-crlf-bad" "$o" pass --shard 1/3
+crlf_bad_ok () {
+  [ "$st" -eq 2 ] && [ ! -s "$o/calls" ] \
+    && grep -qx "prove: scripts/prove-costs.txt: line 3 is not NAME SECONDS" "$o/stdout"
+}
+verdict table-crlf-bad crlf_bad_ok
+ends '\r\r' < "$tmp/wt/scripts/prove-costs.txt" | flat table-crcrlf
+crcrlf_ok () {
+  local k
+  [ "$(tr -d -c '\r' < "$tmp/table-crcrlf/scripts/prove-costs.txt" | wc -c | tr -d ' ')" \
+    -eq "$((2 * $(wc -l < "$tmp/table-crcrlf/scripts/prove-costs.txt")))" ] || return 1
+  for k in 1 2 3; do
+    o="$tmp/v/table-crcrlf-$k"
+    PROVE_ALR="$tmp/no-such-alr" prove "$tmp/table-crcrlf" "$o" pass --list --shard "$k/3"
+    [ "$st" -eq 0 ] && same "$o/stdout" "$tmp/want-w3-$k" || return 1
+  done
+}
+verdict table-crcrlf crcrlf_ok
+printf '# c\n\nunit-a 5\nunit-b x\nunit-c 4\n' | ends '\r\r' | flat table-crcrlf-bad
+o="$tmp/v/table-crcrlf-bad"
+prove "$tmp/table-crcrlf-bad" "$o" pass --shard 1/3
+crcrlf_bad_ok () {
+  [ "$st" -eq 2 ] && [ ! -s "$o/calls" ] \
+    && grep -qx "prove: scripts/prove-costs.txt: line 4 is not NAME SECONDS" "$o/stdout"
+}
+verdict table-crcrlf-bad crcrlf_bad_ok
+# Mixed endings (CR LF, then CR CR LF) read as the same table in LF.
+printf '# c\r\n\r\nunit-a 10\r\r\n' | flat table-mixed-cr
+printf '# c\n\nunit-a 10\n' | flat table-mixed-lf
+mixed_ok () {
+  local k
+  for k in 1 2 3; do
+    o="$tmp/v/table-mixed-lf-$k"
+    PROVE_ALR="$tmp/no-such-alr" prove "$tmp/table-mixed-lf" "$o" pass --list --shard "$k/3"
+    [ "$st" -eq 0 ] || return 1
+    o="$tmp/v/table-mixed-cr-$k"
+    PROVE_ALR="$tmp/no-such-alr" prove "$tmp/table-mixed-cr" "$o" pass --list --shard "$k/3"
+    [ "$st" -eq 0 ] && same "$o/stdout" "$tmp/v/table-mixed-lf-$k/stdout" || return 1
+  done
+}
+verdict table-mixed-cr mixed_ok
 mkdir -p "$tmp/table-dir/scripts/prove-costs.txt"
 cp -R "$tmp/multi/src" "$tmp/multi/tests" "$tmp/table-dir/"
 cp scripts/prove.sh "$tmp/table-dir/scripts/"
@@ -658,12 +727,26 @@ costs_ok () {
     && [ "$(grep -c '^#' "$o/stdout")" -eq 4 ]
 }
 verdict costs-mean costs_ok
+# Result lines ending in CR CR LF read as the same lines in LF.
+ends '\r\r' < "$tmp/log1" > "$tmp/log1-crcr"
+o="$tmp/v/costs-crcrlf"
+mkdir -p "$o"
+st=0
+"$TEST_BASH" scripts/prove-costs.sh "$tmp/log1-crcr" > "$o/stdout" 2> "$o/stderr" || st=$?
+st_crcr=$st
+st=0
+"$TEST_BASH" scripts/prove-costs.sh "$tmp/log1" > "$o/want" 2> /dev/null || st=$?
+costs_crcr_ok () {
+  [ "$st_crcr" -eq 0 ] && [ "$st" -eq 0 ] && [ ! -s "$o/stderr" ] \
+    && [ "$(grep -vc '^#' "$o/want")" -eq 5 ] && same "$o/stdout" "$o/want"
+}
+verdict costs-crcrlf costs_crcr_ok
 # Its table is one prove.sh reads and uses. Costs: unit-a 11, subp-a-P 4,
 # unit-b 1, subp-c-H3 1, subp-c-H2 3, and the rest the median, 3. Two
 # shards: unit-a 1 (11 0), P 2 (11 4), unit-c 2 (11 7), F 2 (11 10),
 # G 2 (11 13), H1 1 (14 13), H2 2 (14 16), Inner 1 (17 16),
 # Hidden 2 (17 19), unit-b 1 (18 19), H3 1 (19 19).
-flat costs-roundtrip < "$o/stdout"
+flat costs-roundtrip < "$tmp/v/costs-mean/stdout"
 printf '%s\n' unit-a unit-b subp-c-H1 subp-c-H3 subp-a-Inner > "$tmp/want-rt-1"
 printf '%s\n' unit-c subp-a-P subp-a-F subp-b-G subp-c-H2 subp-c-Hidden > "$tmp/want-rt-2"
 roundtrip_ok () {
