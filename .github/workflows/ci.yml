@@ -39,10 +39,10 @@ jobs:
   prove:
     name: prove (${{ matrix.name }}, ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.os }}
-    # A placeholder: the shards split by measured time have not been
-    # timed yet, so the limit is to be set from their first runs. A run
+    # Set from the first runs of the shards split by measured time: the
+    # longest job took 30 minutes (Windows), the others 18 to 25. A run
     # that hits the limit is an error to rerun, never a failed proof.
-    timeout-minutes: 60
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       # The proof is split into `shards` jobs per platform. `shard` must
@@ -93,6 +93,21 @@ jobs:
       - name: GNATprove per unit and per subprogram, this shard, with steps (all proved, or the job fails)
         shell: bash
         run: bash scripts/prove.sh --jobs 2 --shard ${{ matrix.shard }}/${{ matrix.shards }}
+      # The output of each GNATprove command of this shard, one file per
+      # command (tests/obj/prove/NAME.txt: each check with the provers,
+      # time and steps that proved it), kept when the proof fails too (a
+      # job lost or timed out may keep nothing). They name paths of the
+      # runner only.
+      - name: Keep the GNATprove output of each command
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prove-output-${{ matrix.name }}-${{ matrix.shard }}-of-${{ matrix.shards }}
+          path: |
+            tests/obj/prove/*.txt
+            !tests/obj/prove/build.txt
+          retention-days: 14
+          if-no-files-found: warn
 
   differential:
     name: differential (${{ matrix.name }})
@@ -133,10 +148,10 @@ jobs:
   decoder:
     name: decoder (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # Not measured on the runners yet: the tests took 4 minutes locally
-    # (macOS arm64), the measurements seconds. A generous placeholder, not
-    # a result; a run that hits it is an error to rerun.
-    timeout-minutes: 60
+    # Set from one CI run: the longest decoder job took 17 minutes
+    # (Windows), the others 13 to 15. A run that hits the limit is an
+    # error to rerun.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -185,10 +200,10 @@ jobs:
   model:
     name: model (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # Not measured on the runners yet: the tests took 4 minutes locally
-    # (macOS arm64). A generous placeholder, not a result; a run that hits
-    # it is an error to rerun.
-    timeout-minutes: 60
+    # Set from one CI run: the longest model job took 7 minutes
+    # (Windows), the others 5 to 6. A run that hits the limit is an error
+    # to rerun.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -224,9 +239,8 @@ jobs:
   gates:
     name: gates (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # Set from two CI runs: the longest gates job so far took 8 minutes
-    # (Windows, which stopped at the first failing step; its full time is
-    # still to be seen). The self-tests start thousands of processes,
+    # Set from CI runs: the longest gates job took 17 minutes (Windows;
+    # the others 1 to 4). The self-tests start thousands of processes,
     # which Git Bash on Windows does slowly. A run that hits the limit is
     # an error to rerun.
     timeout-minutes: 60

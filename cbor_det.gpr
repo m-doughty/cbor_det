@@ -77,8 +77,9 @@ project Cbor_Det is
    --    alr exec -- gnatprove -P ../cbor_det.gpr
    --  Provers are bounded by --steps only (no wall-clock timeout), so a
    --  proof result is reproducible from machine to machine. The limit is
-   --  per prover and per check; 20000 leaves room for the rare check
-   --  that only the last prover in the list closes.
+   --  per prover and per check; 40000 leaves room for the rare check
+   --  that only the last prover in the list closes, and for a check
+   --  that takes more steps on one platform than on another.
    package Prove is
       for Proof_Switches ("Ada") use
         ("--mode=all",
@@ -87,7 +88,7 @@ project Cbor_Det is
          "--warnings=error",
          "--prover=z3,cvc5,altergo",
          "--timeout=0",
-         "--steps=20000",
+         "--steps=40000",
          "--counterexamples=off",
          "--report=fail");
    end Prove;

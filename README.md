@@ -231,10 +231,11 @@ they ran, and fails if they did not run where they could.
   tell a false assertion from one that is only hard, so the 89 proof
   kills rest on that report. The suite ran with a limit of 10 000
   steps; each of the 89 kills was rerun with a limit of 100 000 and
-  stayed unproved at the same assertion, with no counterexample (so it
-  is also unproved at this release's limit of 20 000), and the unmutated
-  proofs and the mutants that remove a derivable clause prove. That is evidence the checks are sensitive, not a proof that the
-  mutated assertions are unprovable.
+  stayed unproved at the same assertion, with no counterexample, so it
+  is also unproved at the crate's limit of 40 000; and the unmutated
+  proofs and the mutants that remove a derivable clause prove. That is
+  evidence the checks are sensitive, not a proof that the mutated
+  assertions are unprovable.
 
 ## What is trusted
 

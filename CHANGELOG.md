@@ -55,7 +55,7 @@
   the shards (coverage never depends on it), made from run logs by
   `scripts/prove-costs.sh`. Each result line ends with the command's
   time in whole seconds.
-- The proof step limit is 20 000 (was 10 000), per prover and per
+- The proof step limit is 40 000 (was 10 000), per prover and per
   check.
 - The crate layout, the build matrix, the proof configuration (bounded by
   prover steps, not time) and the CI gates. `Cbor_Det` declares the
